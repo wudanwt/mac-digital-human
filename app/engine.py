@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,8 @@ class RenderResult:
 
 class MuseTalkMLXEngine:
     """Thin orchestration layer around the pinned musetalk-mlx integration scripts."""
+
+    PLACEHOLDER = (0.0, 0.0, 0.0, 0.0)
 
     def __init__(self) -> None:
         settings.ensure_runtime_dirs()
@@ -60,6 +63,40 @@ class MuseTalkMLXEngine:
             proc = subprocess.run(cmd, cwd=cwd)
         if proc.returncode != 0:
             raise EngineError(f"command failed ({proc.returncode}): {' '.join(cmd)}")
+
+    def _repair_missing_coords(self, coords_file: Path, log_file: Path) -> int:
+        """Fill intermittent detector misses with the closest previous/next valid face box."""
+        with coords_file.open("rb") as f:
+            meta = pickle.load(f)
+        coords = list(meta.get("coords", []))
+        if not coords:
+            raise EngineError("no frames/face coordinates were produced")
+
+        valid = [i for i, box in enumerate(coords) if tuple(box) != self.PLACEHOLDER]
+        if not valid:
+            raise EngineError("no face was detected in the master video")
+
+        repaired = 0
+        first_valid = valid[0]
+        for i in range(first_valid):
+            coords[i] = coords[first_valid]
+            repaired += 1
+
+        last_box = coords[first_valid]
+        for i in range(first_valid, len(coords)):
+            if tuple(coords[i]) == self.PLACEHOLDER:
+                coords[i] = last_box
+                repaired += 1
+            else:
+                last_box = coords[i]
+
+        meta["coords"] = coords
+        with coords_file.open("wb") as f:
+            pickle.dump(meta, f)
+        if repaired:
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write(f"\n[repair] filled {repaired} frames with neighboring face boxes\n")
+        return repaired
 
     def render(
         self,
@@ -120,6 +157,7 @@ class MuseTalkMLXEngine:
             cwd=mlx,
             log_file=log,
         )
+        self._repair_missing_coords(coords, log)
         self._run(
             [
                 sys.executable,
