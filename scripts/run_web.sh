@@ -7,4 +7,4 @@ if [[ ! -x "$PY" ]]; then
   exit 2
 fi
 cd "$ROOT"
-exec "$PY" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+exec "$PY" -m uvicorn app.main:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}"
