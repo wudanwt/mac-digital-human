@@ -26,7 +26,9 @@ done
 
 echo "[python] preparing Python 3.11"
 uv python install 3.11
-uv venv --python 3.11 .venv
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  uv venv --python 3.11 .venv
+fi
 PY="$ROOT/.venv/bin/python"
 
 uv pip install --python "$PY" -e .
@@ -50,17 +52,14 @@ clone_pinned "https://github.com/xocialize/musetalk-mlx.git" "$ROOT/vendor/muset
 echo "[vendor] MuseTalk upstream"
 clone_pinned "https://github.com/jjt997/musetalk.git" "$ROOT/vendor/MuseTalk" "$MUSETALK_REV"
 
-# MLX core package.
 uv pip install --python "$PY" -e "$ROOT/vendor/musetalk-mlx"
 
-# Only the Mac video-pre/post-processing dependencies we need. We intentionally
-# do NOT install the original CUDA/MMCV/MMPose stack.
+# Minimal Mac preprocessing stack. Do not install the original CUDA/MMCV/MMPose stack.
 uv pip install --python "$PY" \
   torch torchvision \
   rtmlib onnxruntime \
   gdown pillow scipy requests
 
-# Ensure model downloads use the same environment.
 "$PY" scripts/setup_models.py --variant "$VARIANT"
 
 echo
@@ -68,5 +67,5 @@ echo
 
 echo
 echo "安装完成。"
-echo "CLI: ./scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
-echo "Web: ./scripts/run_web.sh"
+echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
+echo "Web: bash scripts/run_web.sh"
