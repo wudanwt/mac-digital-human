@@ -1,0 +1,17 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.env
+vendor/
+models/
+workspace/
+outputs/
+.cache/
+*.log
+samples/*.mp4
+samples/*.mov
+samples/*.wav
+samples/*.m4a
+samples/*.mp3
+!samples/README.md
