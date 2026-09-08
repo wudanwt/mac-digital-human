@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
 import sys
 from pathlib import Path
+from urllib.request import urlretrieve
 
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import snapshot_download
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,8 +28,16 @@ def download_face_parse() -> None:
             raise RuntimeError("failed to download face parsing checkpoint")
     if not resnet.exists():
         print("[models] resnet18")
-        from urllib.request import urlretrieve
         urlretrieve("https://download.pytorch.org/models/resnet18-5c106cde.pth", resnet)
+
+
+def download_s3fd() -> None:
+    target = UPSTREAM / "musetalk" / "utils" / "face_detection" / "detection" / "sfd" / "s3fd.pth"
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    print("[models] S3FD face detector")
+    urlretrieve("https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth", target)
 
 
 def download_dwpose() -> None:
@@ -87,6 +94,7 @@ def main() -> int:
     download_mlx_variant(args.variant)
     download_dwpose()
     download_face_parse()
+    download_s3fd()
     print("[models] done")
     return 0
 
