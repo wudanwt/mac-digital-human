@@ -31,12 +31,25 @@ def main() -> int:
     print(f"[longcat] target: {target}")
     snapshot_download(repo_id=repo_id, local_dir=str(target))
 
+    # The converted LongCat weights contain the Whisper encoder but not the
+    # Transformers feature-extractor config used to build the 128-bin mel input.
+    # Cache that tiny config now so normal inference can remain offline.
+    whisper_fe = TARGET_ROOT / "whisper-large-v3-feature-extractor"
+    whisper_fe.mkdir(parents=True, exist_ok=True)
+    print("[longcat] caching Whisper-large-v3 feature extractor config")
+    snapshot_download(
+        repo_id="openai/whisper-large-v3",
+        local_dir=str(whisper_fe),
+        allow_patterns=["preprocessor_config.json"],
+    )
+
     required = [
         target / "dit" / "config.json",
         target / "vae" / "config.json",
         target / "audio_encoder" / "config.json",
         target / "text_encoder" / "config.json",
         target / "tokenizer",
+        whisper_fe / "preprocessor_config.json",
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
