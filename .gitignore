@@ -14,4 +14,8 @@ samples/*.mov
 samples/*.wav
 samples/*.m4a
 samples/*.mp3
+samples/*.png
+samples/*.jpg
+samples/*.jpeg
+samples/*.webp
 !samples/README.md
