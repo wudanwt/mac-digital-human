@@ -13,7 +13,7 @@ from .composer import CourseComposer, media_duration
 from .config import settings
 from .engines import LongCatMLXEngine, MuseTalkMLXEngine
 from .presets import get_avatar_profile, get_prompt_preset
-from .tts import MLXAudioTTS, TTSConfig
+from .tts import create_tts, infer_provider
 
 
 class CourseBuildError(RuntimeError):
@@ -41,6 +41,7 @@ class CourseBuildResult:
     output: str
     workspace: str
     elapsed_seconds: float
+    tts_provider: str
     segments: list[SegmentReport]
 
     def to_dict(self) -> dict:
@@ -70,9 +71,9 @@ def _frames_for_duration(seconds: float, fps: int, minimum: int = 61, maximum: i
 class CoursePipeline:
     """Turn a course manifest into TTS -> avatar clips -> one final MP4.
 
-    The pipeline intentionally stages TTS first, releases its model, and only
-    then starts video generation. This avoids keeping a TTS model resident while
-    LongCat consumes most of the unified memory on a 48 GB Mac.
+    Audio8 ONNX is the default production TTS and stays warm in its isolated
+    CPU service across the batch. Qwen3/MLX remains available for premium
+    expression by setting ``tts.provider`` to ``qwen3``.
     """
 
     def __init__(self) -> None:
@@ -109,22 +110,12 @@ class CoursePipeline:
         master_video = _resolve_path(base, assets.get("master_video"))
         reference_image = _resolve_path(base, assets.get("reference_image"))
 
+        # Profile supplies the reusable voice; course-level values override it.
         profile_tts = dict(profile.get("tts") or {}) if profile else {}
         manifest_tts = dict(manifest.get("tts") or {})
         tts_payload = {**profile_tts, **manifest_tts}
-        defaults = TTSConfig()
-        ref_audio_value = tts_payload.get("ref_audio")
-        ref_audio = _resolve_path(base, ref_audio_value) if ref_audio_value else None
-        tts_config = TTSConfig(
-            model=str(tts_payload.get("model") or defaults.model),
-            voice=str(tts_payload.get("voice") or defaults.voice),
-            language=str(tts_payload.get("language") or defaults.language),
-            instruct=str(tts_payload.get("instruct") or defaults.instruct),
-            clone_model=str(tts_payload.get("clone_model") or defaults.clone_model),
-            ref_audio=str(ref_audio) if ref_audio else None,
-            ref_text=tts_payload.get("ref_text"),
-        )
-        tts = MLXAudioTTS(tts_config)
+        tts_provider = infer_provider(tts_payload)
+        tts = create_tts(tts_payload, base=base)
 
         raw_segments = manifest.get("segments")
         if not isinstance(raw_segments, list) or not raw_segments:
@@ -140,7 +131,7 @@ class CoursePipeline:
         started = time.time()
         prepared: list[dict[str, Any]] = []
 
-        # Phase A: synthesize all narration while the TTS model is hot.
+        # Phase A: synthesize all narration while one TTS runtime stays hot.
         for index, item in enumerate(raw_segments, start=1):
             if not isinstance(item, dict):
                 raise CourseBuildError(f"segment {index} must be an object")
@@ -166,7 +157,8 @@ class CoursePipeline:
                 }
             )
 
-        # Free MLX TTS weights before loading LongCat.
+        # Qwen3 releases MLX weights here; Audio8 intentionally leaves its
+        # small isolated CPU service warm for subsequent jobs.
         tts.release()
 
         reports: list[SegmentReport] = []
@@ -257,6 +249,7 @@ class CoursePipeline:
             output=str(final),
             workspace=str(work),
             elapsed_seconds=round(elapsed, 3),
+            tts_provider=tts_provider,
             segments=reports,
         )
         (work / "course-report.json").write_text(
