@@ -8,6 +8,7 @@ MLX_REV="${MLX_REV:-c6eb30ebd1ed4d043983209813370153de9346bf}"
 MUSETALK_REV="${MUSETALK_REV:-8ca7d1884cf5c1c766dcd0365b069c96d75707cf}"
 VARIANT="${VARIANT:-q8}"
 WITH_LONGCAT="${WITH_LONGCAT:-0}"
+WITH_TTS="${WITH_TTS:-0}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "[WARN] 本安装器针对 Apple Silicon macOS 设计。"
@@ -34,7 +35,7 @@ PY="$ROOT/.venv/bin/python"
 
 uv pip install --python "$PY" -e .
 
-mkdir -p vendor models workspace outputs samples
+mkdir -p vendor models workspace outputs samples profiles benchmarks/local
 
 clone_pinned() {
   local url="$1"
@@ -72,10 +73,20 @@ if [[ "$WITH_LONGCAT" == "1" ]]; then
   LONGCAT_VARIANT="${LONGCAT_VARIANT:-q4-merged}" bash scripts/setup_longcat.sh
 else
   echo
-  echo "MuseTalk 安装完成。"
   echo "如需高质量 LongCat 引擎：bash scripts/setup_longcat.sh"
-  echo "或一次安装双引擎：WITH_LONGCAT=1 bash scripts/setup.sh"
 fi
 
+if [[ "$WITH_TTS" == "1" ]]; then
+  echo
+  echo "[optional] installing MLX-Audio / Qwen3-TTS"
+  bash scripts/setup_tts.sh
+else
+  echo "如需课程脚本自动 TTS：bash scripts/setup_tts.sh"
+fi
+
+echo
+echo "安装阶段完成。"
 echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
 echo "Web: bash scripts/run_web.sh"
+echo "课程生产: bash scripts/run_course.sh examples/course.example.json"
+echo "完整三套组件: WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh"
