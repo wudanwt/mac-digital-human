@@ -1,59 +1,68 @@
 # mac-digital-human
 
-面向 **Apple Silicon（优先 M5 Pro 48GB）** 的本地数字人工作台。
+面向 **Apple Silicon（优先 M5 Pro 48GB）** 的本地数字人生产工作台。
 
-项目现在采用双引擎架构：
+项目不再只解决“让一个头像说话”，而是把生成流程拆成三个可组合层：
 
-| 模式 | 引擎 | 输入 | 优势 | 推荐用途 |
-| --- | --- | --- | --- | --- |
-| ⚡ 极速数字人口播 | MuseTalk 1.5 MLX | 母版视频 + 新音频 | 快、身份稳定、适合批量 | 培训正文、课程批量口播 |
-| 🎬 高质量数字人 | LongCat-Video-Avatar 1.5 MLX | 参考照片 + 音频 + Prompt | 会生成表情、头动和人物动态 | 课程开场、章节引导、精品短视频 |
+| 层 | 组件 | 作用 |
+| --- | --- | --- |
+| ⚡ 快速数字人口播 | MuseTalk 1.5 MLX | 母版视频 + 音频，适合课程正文和批量口播 |
+| 🎬 高质量数字人 | LongCat-Video-Avatar 1.5 MLX | 照片 + 音频 + Prompt，适合片头、章节引导、精品短段 |
+| 🔊 本地 TTS | MLX-Audio + Qwen3-TTS | 中文预设音色或参考音频声音克隆 |
 
-> 当前 LongCat MLX 端属于单段高质量 AI2V 生成，不是实时数字人，也还没有在本项目中接入长视频续写。M5 Pro 48GB 默认使用 **Q4 DMD merged**。
+在此之上提供 **人物 Profile、Prompt 预设、课程 Manifest、自动引擎选择、FFmpeg 成片拼接和真机 benchmark**。
 
-## 当前状态
+## 当前能力
 
-- [x] Apple Silicon 环境检测
 - [x] MuseTalk-MLX 快速口型引擎
-- [x] LongCat Avatar 1.5 MLX 高质量引擎适配
-- [x] M5 Pro 48GB 默认 LongCat Q4 配置
-- [x] CLI 双引擎入口
-- [x] FastAPI 双引擎 API
-- [x] Web 双模式 UI
-- [x] 单机串行任务队列，避免统一内存并发争抢
-- [x] LongCat 输出自动重新封装原音频
-- [x] 模型 / 上游代码固定版本与独立安装脚本
-- [ ] 在目标 M5 Pro 48GB 真机完成 LongCat 首个样例验收
-- [ ] LongCat 长视频分段 / continuation
-- [ ] FasterLivePortrait-MLX 表情增强
-- [ ] 声音克隆 / TTS
-- [ ] PPT → 讲稿 → TTS → 数字讲师视频
-- [ ] 实时 AI Agent 数字专家
+- [x] LongCat Avatar 1.5 MLX Q4 高质量引擎
+- [x] Web / CLI / FastAPI 双引擎入口
+- [x] 本地人物 Profile：照片、MuseTalk 母版、Prompt、TTS 参考统一复用
+- [x] 能源培训 / 高管简报 / 电力市场专家等 Prompt 预设
+- [x] MLX-Audio + Qwen3-TTS 中文 TTS
+- [x] Qwen3-TTS 参考音频零样本声音克隆接口
+- [x] Course Manifest：脚本 → TTS → 数字人批量生成
+- [x] `hero/intro/section` 自动优先 LongCat，`body` 自动走 MuseTalk
+- [x] LongCat 自动模式超长时回退 MuseTalk
+- [x] LongCat + MuseTalk 片段统一规格并自动混剪
+- [x] M5 真机 benchmark 记录器
+- [x] GitHub CI：compile + unit tests
+- [ ] M5 Pro 48GB LongCat Q4 首个真实 benchmark 数据
+- [ ] PPT 页面合成 / 自动字幕
+- [ ] LongCat continuation
+- [ ] FasterLivePortrait / 实时 Agent 评估
 
-## 架构
+## 整体架构
 
 ```text
-                         Mac Digital Human
-                                │
-                 ┌──────────────┴──────────────┐
-                 │                             │
-          MuseTalk Fast                  LongCat Quality
-                 │                             │
-     master video + audio          image + audio + prompt
-                 │                             │
- face / landmark preprocessing        Avatar 1.5 MLX Q4
-                 │                             │
-        MLX lip-sync core              full video generation
-                 │                             │
-          blend + mux                    mux original audio
-                 └──────────────┬──────────────┘
-                                │
-                       outputs/<job>/result.mp4
-                                │
-                    CLI / Web UI / FastAPI
+                         Course Manifest
+                               │
+                     ┌─────────┴─────────┐
+                     │                   │
+                 script text         Avatar Profile
+                     │           image / master / prompt
+                     ↓                   │
+          MLX-Audio / Qwen3-TTS         │
+                     │                   │
+                   audio                 │
+                     │                   │
+             ┌───────┴────────┐          │
+             │                │          │
+        hero / section       body        │
+             │                │          │
+             ↓                ↓          │
+       LongCat MLX       MuseTalk MLX ←──┘
+             │                │
+             └───────┬────────┘
+                     ↓
+              generated clips
+                     ↓
+             FFmpeg normalize
+                     ↓
+              final course.mp4
 ```
 
-任务默认串行执行。MuseTalk 上游会使用共享临时目录，而 LongCat 在 48GB 统一内存机器上本身也很重，因此不建议两个生成任务并发跑。
+针对 M5 Pro 48GB，TTS 和 LongCat **不同时驻留**：课程流水线先一次性生成所有配音并释放 TTS，再开始视频生成，降低统一内存压力。
 
 ## 快速开始
 
@@ -64,68 +73,116 @@ git clone https://github.com/wudanwt/mac-digital-human.git
 cd mac-digital-human
 ```
 
-### 2. 安装 MuseTalk 快速引擎
+### 2. 安装
+
+只需要 MuseTalk：
 
 ```bash
 bash scripts/setup.sh
 ```
 
-脚本会建立 `.venv`、安装 FFmpeg / uv 依赖、固定克隆 MuseTalk-MLX 与 MuseTalk，并下载 MuseTalk Q8 及人脸预处理模型。
-
-### 3. 安装 LongCat 高质量引擎
+LongCat：
 
 ```bash
 bash scripts/setup_longcat.sh
 ```
 
-默认下载：
+TTS：
+
+```bash
+bash scripts/setup_tts.sh
+```
+
+一次装完整课程生产栈：
+
+```bash
+WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh
+```
+
+M5 Pro 48GB 的 LongCat 默认是：
 
 ```text
 mlx-community/LongCat-Video-Avatar-1.5-q4-dmd-merged
 ```
 
-模型体积约为几十 GB 级，请预留足够磁盘空间。模型、上游仓库、人物素材和生成结果都默认不提交到 Git。
+TTS 默认是：
 
-也可以一次安装两套：
-
-```bash
-WITH_LONGCAT=1 bash scripts/setup.sh
+```text
+mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit
 ```
 
-### 4. 检查运行环境
+如需把声音克隆模型也提前缓存：
 
 ```bash
-.venv/bin/python scripts/check_runtime.py --engine all
+WITH_CLONE_MODEL=1 bash scripts/setup_tts.sh
 ```
 
-只检查 LongCat：
-
-```bash
-.venv/bin/python scripts/check_runtime.py \
-  --engine longcat \
-  --longcat-variant q4-merged
-```
-
-## Web UI
+## 单段 Web 工作台
 
 ```bash
 bash scripts/run_web.sh
 ```
 
-浏览器打开：
+打开：
 
 ```text
 http://127.0.0.1:8000
 ```
 
-页面中可以直接切换：
+页面可以：
 
-- **极速数字人口播**：上传母版视频 + 音频。
-- **高质量数字人**：上传参考照片 + 音频 + Prompt。
+- 选择 MuseTalk / LongCat。
+- 选择本地人物 Profile。
+- 选择 LongCat Prompt 预设。
+- 继续手工修改 Prompt。
+- Profile 已配置照片 / 母版时无需重复上传。
 
-Web 服务默认只监听本机。只有明确需要局域网访问时才建议设置 `HOST=0.0.0.0`。
+服务默认只监听 `127.0.0.1`。
 
-## CLI
+## 人物 Profile
+
+复制：
+
+```bash
+cp profiles/profile.example.json profiles/dan.json
+```
+
+示例：
+
+```json
+{
+  "id": "dan",
+  "name": "丹哥｜能源培训讲师",
+  "image": "../samples/ref.png",
+  "master_video": "../samples/master.mp4",
+  "prompt_preset": "energy_training_studio",
+  "tts": {
+    "voice": "Dylan",
+    "ref_audio": "../samples/voice-reference.wav",
+    "ref_text": "这里填写参考音频准确逐字稿"
+  }
+}
+```
+
+设置 `ref_audio + ref_text` 后，课程流水线会使用 Qwen3-TTS Base 做声音克隆；不设置则使用 CustomVoice 预设中文音色。
+
+`profiles/*.json`（除示例）、照片、视频和声音默认都被 `.gitignore` 排除。
+
+## LongCat Prompt 预设
+
+内置：
+
+```text
+energy_training_studio  能源科技培训演播室
+executive_briefing      高管汇报 / 正式简报
+power_market_lab        电力市场数字专家
+warm_classroom          亲和课堂
+neutral_closeup         中性稳定近景
+```
+
+这些预设不仅是 Prompt，还带推荐的分辨率和帧数。
+
+## 单段 CLI
 
 ### MuseTalk
 
@@ -137,14 +194,6 @@ bash scripts/run_avatar.sh \
   --variant q8
 ```
 
-`--engine` 省略时仍默认 MuseTalk，兼容旧命令：
-
-```bash
-bash scripts/run_avatar.sh \
-  --video samples/master.mp4 \
-  --audio samples/voice.wav
-```
-
 ### LongCat
 
 ```bash
@@ -153,152 +202,158 @@ bash scripts/run_avatar.sh \
   --image samples/ref.png \
   --audio samples/voice.wav \
   --variant q4-merged \
-  --prompt "A professional Chinese male instructor speaking naturally to camera, subtle head movement, natural hand gestures, calm confident expression."
+  --width 768 \
+  --height 432 \
+  --num-frames 61 \
+  --prompt "A professional Chinese male instructor speaking naturally to camera."
 ```
 
-常用 LongCat 参数：
+首跑先用 `768×432 / 61f`，稳定后再测试 `832×480 / 93f`。
+
+## 课程自动生产
+
+参考：
 
 ```text
---variant q4-merged   # M5 Pro 48GB 默认推荐
---width 832
---height 480
---num-frames 93      # 必须满足 4n+1
---seed 42
+examples/course.example.json
 ```
 
-快速测试可以用：
+基本结构：
+
+```json
+{
+  "title": "能源市场化业务示例课程",
+  "profile": "dan",
+  "segments": [
+    {
+      "id": "opening",
+      "role": "hero",
+      "engine": "auto",
+      "script": "欢迎来到本次课程。"
+    },
+    {
+      "id": "body-1",
+      "role": "body",
+      "engine": "auto",
+      "script": "这里进入课程正文。"
+    }
+  ]
+}
+```
+
+运行：
+
+```bash
+bash scripts/run_course.sh examples/course.example.json
+```
+
+自动策略：
 
 ```text
---width 768 --height 432 --num-frames 61
+hero / intro / section  -> LongCat
+body                    -> MuseTalk
 ```
 
-## API
+LongCat 当前仍适合短段。`auto` 模式下，如果配音长度超过当前 LongCat 帧数上限，会自动切回 MuseTalk，并把原因写入报告。
 
-健康检查：
+输出：
+
+```text
+outputs/courses/<course-id>/course.mp4
+workspace/courses/<course-id>/course-report.json
+```
+
+完整说明见 [`docs/COURSE_PIPELINE.md`](docs/COURSE_PIPELINE.md)。
+
+## M5 Pro 48GB 真机 Benchmark
+
+首个 LongCat 测试：
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+bash scripts/run_benchmark.sh \
+  --engine longcat \
+  --image samples/ref.png \
+  --audio samples/voice.wav \
+  --variant q4-merged \
+  --width 768 \
+  --height 432 \
+  --num-frames 61 \
+  --label m5-pro-48g-first-run
 ```
 
-### MuseTalk 任务
+报告会记录：
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/jobs \
-  -F "engine=musetalk" \
-  -F "video=@samples/master.mp4" \
-  -F "audio=@samples/voice.wav" \
-  -F "variant=q8"
-```
+- 芯片 / 内存
+- 总耗时
+- 输出视频时长
+- realtime factor
+- 进程树峰值 RSS
+- 推理期间最低可用内存
+- variant / 尺寸 / 帧数 / seed
 
-### LongCat 任务
+详见 [`docs/BENCHMARK.md`](docs/BENCHMARK.md)。
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/jobs \
-  -F "engine=longcat" \
-  -F "image=@samples/ref.png" \
-  -F "audio=@samples/voice.wav" \
-  -F "variant=q4-merged" \
-  -F "prompt=A professional Chinese male instructor speaking naturally to camera" \
-  -F "longcat_size=480x832" \
-  -F "num_frames=93"
-```
-
-最终视频统一位于：
+## 输出目录
 
 ```text
 outputs/<job-id>/result.mp4
+outputs/courses/<course-id>/course.mp4
 ```
 
-运行日志位于：
+中间文件和日志：
 
 ```text
-workspace/<job-id>/render.log
+workspace/<job-id>/
+workspace/courses/<course-id>/
 ```
 
-## LongCat 当前限制
-
-当前接入基于 `xocialize/longcat-avatar-mlx` 的 AI2V v1 路线：
-
-1. 一次任务生成一个短视频片段。
-2. 还没有接入 LongCat 官方的多段 continuation / 长视频拼接。
-3. 不是实时引擎；生成速度显著慢于 MuseTalk。
-4. 48GB 机器应优先 Q4；Q8 可实验，BF16 不建议作为默认。
-5. 首次运行会加载大模型，等待时间和内存峰值都明显高于 MuseTalk。
-
-因此当前推荐工作流是：
-
-```text
-培训正文 / 批量课程  -> MuseTalk
-课程开场 / 宣传短片 -> LongCat
-```
-
-## 素材建议
-
-### MuseTalk 母版
-
-- 1080p / 25fps 优先
-- 正脸或轻微侧脸
-- 胸部以上固定机位
-- 光照稳定
-- 嘴部无遮挡
-- 30–60 秒自然呼吸和轻微动作
-
-### LongCat 参考照片
-
-- 单人清晰正面或轻微侧面
-- 面部无遮挡
-- 尽量保持肩部 / 上半身信息完整
-- 光线自然
-- 不建议极端广角或复杂遮挡
-
-人物照片、声音、模型和生成文件默认被 `.gitignore` 排除。
-
-## 目录
+## 目录结构
 
 ```text
 app/
-  engines/
-    base.py             # 共享结果 / 错误类型
-    musetalk.py         # 快速口型引擎
-    longcat.py          # 高质量数字人引擎
-  cli.py
-  jobs.py
-  main.py
+  engines/             MuseTalk / LongCat 适配
+  tts/                 MLX-Audio TTS 适配
+  presets.py           Prompt + Avatar Profile
+  course.py            课程编排
+  composer.py          FFmpeg 成片
+  jobs.py              单机任务队列
+  main.py              Web / API
 scripts/
   setup.sh
   setup_longcat.sh
-  setup_models.py
-  setup_longcat_models.py
+  setup_tts.sh
+  run_avatar.sh
+  run_course.sh
+  run_benchmark.sh
+  benchmark.py
   longcat_infer.py
-  check_runtime.py
-vendor/                 # 上游仓库，不入 Git
-models/                 # 模型权重，不入 Git
-workspace/              # 中间文件，不入 Git
-outputs/                 # 最终视频，不入 Git
-samples/                 # 本地人物素材，不入 Git（保留 README）
+profiles/               本机人物模板
+examples/               课程 Manifest 示例
 docs/
-tests/
+benchmarks/local/       真机报告（不入 Git）
 ```
 
-## 上游与固定版本
+## 上游
 
-当前安装脚本固定：
+当前主链依赖：
 
-- `xocialize/musetalk-mlx`：Apple MLX MuseTalk 1.5 移植
-- `jjt997/musetalk`：MuseTalk 视频预处理 / blending 工具
-- `xocialize/longcat-avatar-mlx`：Apple MLX LongCat-Video-Avatar-1.5 移植
-- LongCat 官方模型来源：`meituan-longcat/LongCat-Video`
+- `xocialize/musetalk-mlx`
+- `jjt997/musetalk`
+- `xocialize/longcat-avatar-mlx`
+- `meituan-longcat/LongCat-Video`
+- `Blaizzy/mlx-audio`
+- `mlx-community/Qwen3-TTS-*`
 
-本仓库只维护本地编排和适配，不重新发布上游模型权重。各模型、代码和依赖的许可证需分别遵守。
+安装脚本对关键上游代码使用固定 commit，避免上游突然变化破坏本地环境。本仓库不重新发布模型权重；各组件继续遵守各自许可证。
 
-## 下一阶段
+## 下一步
 
-下一步重点不是继续堆模型，而是把生成流程产品化：
+不继续堆模型，优先做：
 
-1. M5 Pro 48GB 真机首跑与性能记录。
-2. LongCat 参考照片模板 / Prompt 预设。
-3. 课程脚本 → TTS → 数字人批量任务。
-4. LongCat 精品片段 + MuseTalk 正文自动混剪。
-5. 再评估 FasterLivePortrait 与实时 Agent。
+1. 在 M5 Pro 48GB 跑出 LongCat 61f / 93f benchmark。
+2. 建真实人物 Profile，验证照片、母版和声音参考长期复用。
+3. 用真实 4~6 段课程跑通自动生产。
+4. 根据成片质量决定下一优先级是字幕、PPT 合成还是母版缓存。
+5. FasterLivePortrait 与实时 Agent 暂时保持评估状态。
 
 详见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
