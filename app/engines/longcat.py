@@ -37,6 +37,7 @@ class LongCatMLXEngine:
         variant = variant or settings.default_longcat_variant
         variant_dirname = LONGCAT_VARIANT_DIRS.get(variant)
         model_dir = settings.longcat_weights_dir / variant_dirname if variant_dirname else None
+        whisper_fe = settings.longcat_weights_dir / "whisper-large-v3-feature-extractor"
         checks = {
             "apple_silicon": platform.system() == "Darwin" and platform.machine() == "arm64",
             "ffmpeg": shutil.which("ffmpeg") is not None,
@@ -49,6 +50,7 @@ class LongCatMLXEngine:
             "audio_encoder": bool(model_dir and (model_dir / "audio_encoder" / "config.json").exists()),
             "text_encoder": bool(model_dir and (model_dir / "text_encoder" / "config.json").exists()),
             "vae": bool(model_dir and (model_dir / "vae" / "config.json").exists()),
+            "whisper_feature_extractor": (whisper_fe / "preprocessor_config.json").exists(),
         }
         return {
             "engine": self.name,
