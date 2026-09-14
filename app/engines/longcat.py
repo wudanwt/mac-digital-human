@@ -103,8 +103,8 @@ class LongCatMLXEngine:
             raise EngineError("LongCat prompt must not be empty")
         if height % 8 or width % 8:
             raise EngineError("LongCat height and width must be divisible by 8")
-        if num_frames < 9:
-            raise EngineError("LongCat num_frames must be at least 9")
+        if num_frames < 9 or (num_frames - 1) % 4 != 0:
+            raise EngineError("LongCat num_frames must satisfy 4n+1 and be at least 9")
 
         job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         work = settings.workspace_dir / job_id
