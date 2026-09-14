@@ -94,6 +94,15 @@ def _profiles_dir() -> Path:
     return path
 
 
+def _resolve_profile_path(file: Path, value: str | None) -> str:
+    if not value:
+        return ""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (file.parent / path).resolve()
+    return str(path)
+
+
 def list_avatar_profiles() -> list[dict]:
     """Read local profile JSON files.
 
@@ -105,18 +114,19 @@ def list_avatar_profiles() -> list[dict]:
         try:
             payload = json.loads(file.read_text(encoding="utf-8"))
             profile_id = str(payload.get("id") or file.stem)
-            image = Path(str(payload.get("image", ""))).expanduser()
-            if image and not image.is_absolute():
-                image = (file.parent / image).resolve()
+            tts = dict(payload.get("tts") or {})
+            if tts.get("ref_audio"):
+                tts["ref_audio"] = _resolve_profile_path(file, str(tts["ref_audio"]))
             profiles.append(
                 {
                     "id": profile_id,
                     "name": str(payload.get("name") or profile_id),
-                    "image": str(image) if str(payload.get("image", "")) else "",
+                    "image": _resolve_profile_path(file, payload.get("image")),
+                    "master_video": _resolve_profile_path(file, payload.get("master_video")),
                     "prompt_preset": payload.get("prompt_preset", "energy_training_studio"),
                     "prompt": payload.get("prompt", ""),
-                    "tts": payload.get("tts", {}),
-                    "source_file": str(file),
+                    "tts": tts,
+                    "source_file": str(file.resolve()),
                 }
             )
         except (OSError, ValueError, TypeError):
