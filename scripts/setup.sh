@@ -78,8 +78,8 @@ fi
 
 if [[ "$WITH_TTS" == "1" ]]; then
   echo
-  echo "[optional] installing MLX-Audio / Qwen3-TTS"
-  bash scripts/setup_tts.sh
+  echo "[optional] installing production TTS (Audio8 ONNX by default)"
+  TTS_PROVIDER="${TTS_PROVIDER:-audio8}" bash scripts/setup_tts.sh
 else
   echo "如需课程脚本自动 TTS：bash scripts/setup_tts.sh"
 fi
@@ -89,4 +89,5 @@ echo "安装阶段完成。"
 echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
 echo "Web: bash scripts/run_web.sh"
 echo "课程生产: bash scripts/run_course.sh examples/course.example.json"
-echo "完整三套组件: WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh"
+echo "完整课程栈: WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh"
+echo "同时安装 Audio8 + Qwen3: WITH_LONGCAT=1 WITH_TTS=1 TTS_PROVIDER=both bash scripts/setup.sh"
