@@ -40,9 +40,10 @@ a{color:#9ec5ff}.tip{font-size:13px;color:#9ba7bd;margin-top:7px}@media(max-widt
   <div class="mode" data-engine="longcat"><b>🎬 高质量数字人</b><span class="muted">参考照片 + 音频 + Prompt，生成表情、头动与人物动态。</span></div>
 </div>
 
+<div><label>驱动音频</label><input name="audio" type="file" accept="audio/*" required><div class="tip">两种模式共用。程序会自动规范化为 16kHz 单声道。</div></div>
+
 <div id="musetalkPanel" class="panel active">
   <div><label>母版视频</label><input id="video" name="video" type="file" accept="video/*" required></div>
-  <div><label>新音频</label><input name="audio" type="file" accept="audio/*" required></div>
   <div><label>MuseTalk 权重</label><select name="musetalk_variant"><option value="q8">Q8（推荐）</option><option value="q4">Q4</option><option value="fp16">FP16</option></select></div>
 </div>
 
