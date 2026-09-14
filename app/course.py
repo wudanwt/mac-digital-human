@@ -12,7 +12,7 @@ from typing import Any
 from .composer import CourseComposer, media_duration
 from .config import settings
 from .engines import LongCatMLXEngine, MuseTalkMLXEngine
-from .presets import get_prompt_preset
+from .presets import get_avatar_profile, get_prompt_preset
 from .tts import MLXAudioTTS, TTSConfig
 
 
@@ -44,8 +44,7 @@ class CourseBuildResult:
     segments: list[SegmentReport]
 
     def to_dict(self) -> dict:
-        payload = asdict(self)
-        return payload
+        return asdict(self)
 
 
 def _slug(text: str) -> str:
@@ -99,18 +98,30 @@ class CoursePipeline:
         audio_dir.mkdir(parents=True, exist_ok=True)
         clip_dir.mkdir(parents=True, exist_ok=True)
 
-        assets = manifest.get("assets", {})
+        profile = get_avatar_profile(manifest.get("profile"))
+        if manifest.get("profile") and profile is None:
+            raise CourseBuildError(f"avatar profile not found: {manifest['profile']}")
+
+        assets = dict(manifest.get("assets") or {})
+        if profile:
+            assets.setdefault("reference_image", profile.get("image"))
+            assets.setdefault("master_video", profile.get("master_video"))
         master_video = _resolve_path(base, assets.get("master_video"))
         reference_image = _resolve_path(base, assets.get("reference_image"))
 
-        tts_payload = manifest.get("tts", {})
+        profile_tts = dict(profile.get("tts") or {}) if profile else {}
+        manifest_tts = dict(manifest.get("tts") or {})
+        tts_payload = {**profile_tts, **manifest_tts}
+        defaults = TTSConfig()
+        ref_audio_value = tts_payload.get("ref_audio")
+        ref_audio = _resolve_path(base, ref_audio_value) if ref_audio_value else None
         tts_config = TTSConfig(
-            model=str(tts_payload.get("model") or TTSConfig.model),
-            voice=str(tts_payload.get("voice") or "Dylan"),
-            language=str(tts_payload.get("language") or "Chinese"),
-            instruct=str(tts_payload.get("instruct") or TTSConfig.instruct),
-            clone_model=str(tts_payload.get("clone_model") or TTSConfig.clone_model),
-            ref_audio=str(_resolve_path(base, tts_payload.get("ref_audio"))) if tts_payload.get("ref_audio") else None,
+            model=str(tts_payload.get("model") or defaults.model),
+            voice=str(tts_payload.get("voice") or defaults.voice),
+            language=str(tts_payload.get("language") or defaults.language),
+            instruct=str(tts_payload.get("instruct") or defaults.instruct),
+            clone_model=str(tts_payload.get("clone_model") or defaults.clone_model),
+            ref_audio=str(ref_audio) if ref_audio else None,
             ref_text=tts_payload.get("ref_text"),
         )
         tts = MLXAudioTTS(tts_config)
@@ -118,6 +129,13 @@ class CoursePipeline:
         raw_segments = manifest.get("segments")
         if not isinstance(raw_segments, list) or not raw_segments:
             raise CourseBuildError("manifest.segments must be a non-empty list")
+
+        default_prompt_preset = (
+            manifest.get("prompt_preset")
+            or (profile.get("prompt_preset") if profile else None)
+            or "energy_training_studio"
+        )
+        profile_prompt = str(profile.get("prompt") or "") if profile else ""
 
         started = time.time()
         prepared: list[dict[str, Any]] = []
@@ -142,8 +160,8 @@ class CoursePipeline:
                     "script": script,
                     "audio": audio,
                     "audio_seconds": duration,
-                    "prompt": item.get("prompt"),
-                    "prompt_preset": item.get("prompt_preset") or manifest.get("prompt_preset") or "energy_training_studio",
+                    "prompt": item.get("prompt") or profile_prompt,
+                    "prompt_preset": item.get("prompt_preset") or default_prompt_preset,
                     "seed": int(item.get("seed", 42)),
                 }
             )
@@ -184,7 +202,7 @@ class CoursePipeline:
             target = clip_dir / f"{segment['index']:03d}-{_slug(segment['id'])}.mp4"
             if resolved == "longcat":
                 if reference_image is None or not reference_image.exists():
-                    raise CourseBuildError("LongCat segment requires assets.reference_image")
+                    raise CourseBuildError("LongCat segment requires a profile image or assets.reference_image")
                 preset = get_prompt_preset(segment["prompt_preset"])
                 prompt = str(segment["prompt"] or (preset.prompt if preset else settings.longcat_default_prompt))
                 frames = _frames_for_duration(
@@ -206,7 +224,7 @@ class CoursePipeline:
                 )
             else:
                 if master_video is None or not master_video.exists():
-                    raise CourseBuildError("MuseTalk segment requires assets.master_video")
+                    raise CourseBuildError("MuseTalk segment requires a profile master_video or assets.master_video")
                 result = self.musetalk.render(
                     master_video,
                     segment["audio"],
