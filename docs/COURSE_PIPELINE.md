@@ -8,29 +8,40 @@
 WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh
 ```
 
-也可以分开安装：
+默认 TTS 会安装 **Audio8 0.1B INT8 ONNX**。它运行在独立 CPU venv 中，并通过本机 `127.0.0.1:8024` 服务提供合成与音色注册。
+
+也可以分别安装：
 
 ```bash
 bash scripts/setup.sh
 bash scripts/setup_longcat.sh
-bash scripts/setup_tts.sh
+bash scripts/setup_audio8.sh
 ```
 
-TTS 使用 Apple Silicon 原生的 MLX-Audio。默认模型为：
+需要同时保留 Qwen3-TTS：
+
+```bash
+TTS_PROVIDER=both bash scripts/setup_tts.sh
+```
+
+只安装 Qwen3：
+
+```bash
+TTS_PROVIDER=qwen3 bash scripts/setup_tts.sh
+```
+
+## 2. TTS 分工
+
+默认策略：
 
 ```text
-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit
+Audio8 0.1B ONNX  -> 批量课程、长期常驻、低内存生产
+Qwen3-TTS MLX     -> 精品片头、情绪 / 指令控制、高表达配音
 ```
 
-需要声音克隆时使用：
+Manifest 不写 `tts.provider` 时默认 Audio8。为了兼容旧配置，如果 Manifest 里直接填写了 `mlx-community/Qwen3-TTS-*` 的 `model`，系统仍自动识别为 Qwen3。
 
-```text
-mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16
-```
-
-并在人物模板中配置 `ref_audio + ref_text`。
-
-## 2. 建人物模板
+## 3. 建人物模板
 
 复制：
 
@@ -38,7 +49,7 @@ mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16
 cp profiles/profile.example.json profiles/dan.json
 ```
 
-示例：
+Audio8 默认音色：
 
 ```json
 {
@@ -48,16 +59,44 @@ cp profiles/profile.example.json profiles/dan.json
   "master_video": "../samples/master.mp4",
   "prompt_preset": "energy_training_studio",
   "tts": {
-    "voice": "Dylan",
+    "provider": "audio8",
+    "voice": "default",
+    "threads": 5
+  }
+}
+```
+
+Audio8 声音克隆：
+
+```json
+{
+  "tts": {
+    "provider": "audio8",
+    "voice": "dan",
     "ref_audio": "../samples/voice-reference.wav",
     "ref_text": "这里必须填写参考音频准确逐字稿"
   }
 }
 ```
 
+第一次使用时系统会自动注册 `dan` 音色；后续可删除 `ref_audio/ref_text`，只保留 `voice: "dan"` 复用已注册音色。
+
+Qwen3 精品配音：
+
+```json
+{
+  "tts": {
+    "provider": "qwen3",
+    "voice": "Dylan",
+    "language": "Chinese",
+    "instruct": "专业、自然、清晰，有交流感。"
+  }
+}
+```
+
 `profiles/*.json`、人物照片、声音和母版默认不会进入 Git。
 
-## 3. Prompt 预设
+## 4. Prompt 预设
 
 内置：
 
@@ -69,7 +108,7 @@ cp profiles/profile.example.json profiles/dan.json
 
 Web 页面会自动读取这些预设。课程 Manifest 也可以在课程级或片段级引用。
 
-## 4. 课程 Manifest
+## 5. 课程 Manifest
 
 参考 `examples/course.example.json`。
 
@@ -80,6 +119,10 @@ Web 页面会自动读取这些预设。课程 Manifest 也可以在课程级或
   "id": "course-demo",
   "title": "课程名称",
   "profile": "dan",
+  "tts": {
+    "provider": "audio8",
+    "voice": "dan"
+  },
   "prompt_preset": "energy_training_studio",
   "longcat_max_frames": 125,
   "segments": [
@@ -99,7 +142,9 @@ Web 页面会自动读取这些预设。课程 Manifest 也可以在课程级或
 }
 ```
 
-## 5. 自动引擎策略
+Profile 的 TTS 配置是默认值，Manifest 的 `tts` 会覆盖 Profile，便于同一人物临时切换 Audio8 / Qwen3。
+
+## 6. 自动视频引擎策略
 
 当 `engine=auto`：
 
@@ -118,7 +163,7 @@ LongCat 当前仍是短段高质量生成。若自动模式下 TTS 音频超过 
 
 但时长超过 LongCat 上限，则直接报错，不悄悄更换引擎。
 
-## 6. 运行
+## 7. 运行
 
 ```bash
 bash scripts/run_course.sh examples/course.example.json
@@ -140,18 +185,19 @@ workspace/courses/<course-id>/
   course-report.json
 ```
 
-## 7. 内存策略
+`course-report.json` 会同时记录课程实际使用的 `tts_provider` 以及每个片段实际使用的数字人引擎。
 
-针对 M5 Pro 48GB，流水线不是把所有模型同时驻留：
+## 8. 内存策略
 
-1. 先加载 TTS，批量生成全部配音。
-2. 主动释放 TTS / MLX cache。
-3. 再按片段顺序运行 LongCat / MuseTalk。
-4. 最后 FFmpeg 统一规格并拼接。
+针对 M5 Pro 48GB：
 
-这样比 TTS + LongCat 同时驻留更适合 48GB 统一内存。
+- Audio8 是独立 CPU ONNX 服务，保持常驻，避免每段重新加载。
+- Qwen3 是 MLX 模型，批量生成配音后会主动释放 MLX cache。
+- LongCat / MuseTalk 继续在主视频流程串行执行。
 
-## 8. 混剪策略
+因此 Audio8 更适合作为日常批量课程默认 TTS；Qwen3 不删除，保留为精品声音路径。
+
+## 9. 混剪策略
 
 当前版本优先可靠性：所有生成片段先统一到：
 
@@ -162,7 +208,7 @@ H.264 / yuv420p
 AAC 48 kHz
 ```
 
-然后使用 FFmpeg concat 进行无损二次拼接。后续再增加：
+然后使用 FFmpeg concat 拼接。后续再增加：
 
 - 转场
 - 自动字幕
@@ -170,5 +216,3 @@ AAC 48 kHz
 - 章节标题
 - 背景音乐 ducking
 - 片头片尾模板
-
-当前不先堆这些视觉功能，优先验证整条课程生产链稳定性。
