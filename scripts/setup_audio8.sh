@@ -41,7 +41,7 @@ if sys.version_info < (3, 10):
     raise SystemExit("Audio8 requires Python 3.10+")
 PY
 
-if [[ ! -d "$MODEL_DIR" || ! -f "$MODEL_DIR/manifest.json" ]]; then
+if [[ ! -d "$MODEL_DIR" || ! -f "$MODEL_DIR/runtime_manifest.json" ]]; then
   echo "[audio8] downloading $AUDIO8_MODEL"
   "$PYTHON_BIN" -m pip install -U huggingface_hub >/dev/null
   "$PYTHON_BIN" - "$AUDIO8_MODEL" "$MODEL_DIR" <<'PY'
@@ -51,6 +51,11 @@ snapshot_download(repo_id=sys.argv[1], local_dir=sys.argv[2])
 PY
 else
   echo "[audio8] model already present: $MODEL_DIR"
+fi
+
+if [[ ! -f "$MODEL_DIR/runtime_manifest.json" ]]; then
+  echo "[ERROR] Audio8 model download incomplete: runtime_manifest.json missing" >&2
+  exit 2
 fi
 
 if [[ ! -x "$RUNTIME/.venv/bin/python" ]]; then
