@@ -1,0 +1,43 @@
+{
+  "id": "energy-market-demo",
+  "title": "能源市场化业务示例课程",
+  "prompt_preset": "energy_training_studio",
+  "longcat_max_frames": 125,
+  "assets": {
+    "master_video": "../samples/master.mp4",
+    "reference_image": "../samples/ref.png"
+  },
+  "tts": {
+    "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+    "voice": "Dylan",
+    "language": "Chinese",
+    "instruct": "专业、自然、清晰的企业培训普通话，语速适中，有交流感。"
+  },
+  "segments": [
+    {
+      "id": "opening",
+      "role": "hero",
+      "engine": "auto",
+      "script": "欢迎来到能源市场化业务训练营。"
+    },
+    {
+      "id": "chapter-1",
+      "role": "body",
+      "engine": "auto",
+      "script": "这一节，我们先理解为什么项目交付能力并不等于业务经营能力。"
+    },
+    {
+      "id": "section-transition",
+      "role": "section",
+      "engine": "auto",
+      "prompt_preset": "power_market_lab",
+      "script": "接下来，我们进入电力市场业务机会识别。"
+    },
+    {
+      "id": "chapter-2",
+      "role": "body",
+      "engine": "auto",
+      "script": "面对现货市场、代理购电和综合能源服务，我们需要从规则、客户和商业模式三个层面同时判断机会。"
+    }
+  ]
+}
