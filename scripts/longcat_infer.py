@@ -27,6 +27,20 @@ def load_vendor_helpers(vendor: Path):
     return module
 
 
+def preprocess_audio_mel(audio_path: Path, feature_extractor_dir: Path) -> mx.array:
+    """Create Whisper-large-v3 mel features using only locally cached config."""
+    import librosa
+    from transformers import WhisperFeatureExtractor
+
+    audio, _ = librosa.load(str(audio_path), sr=16000)
+    extractor = WhisperFeatureExtractor.from_pretrained(
+        str(feature_extractor_dir),
+        local_files_only=True,
+    )
+    inputs = extractor(audio, sampling_rate=16000, return_tensors="np")
+    return mx.array(inputs.input_features.astype(np.float32))
+
+
 def write_video_with_audio(frames: np.ndarray, audio: Path, out: Path, fps: int) -> None:
     import imageio.v2 as imageio
 
@@ -83,8 +97,13 @@ def main() -> int:
 
     upstream = load_vendor_helpers(args.vendor)
     variant_dir = args.weights / upstream.VARIANT_DIRNAMES[args.variant]
+    feature_extractor_dir = args.weights / "whisper-large-v3-feature-extractor"
     if not variant_dir.exists():
         raise SystemExit(f"weights not found: {variant_dir}")
+    if not (feature_extractor_dir / "preprocessor_config.json").exists():
+        raise SystemExit(
+            "local Whisper feature extractor config is missing; run scripts/setup_longcat_models.py"
+        )
 
     print("=== LongCat Avatar 1.5 MLX ===", flush=True)
     print(f"variant={args.variant} size={args.width}x{args.height} frames={args.num_frames} fps={args.fps}", flush=True)
@@ -96,7 +115,7 @@ def main() -> int:
     print(f"pipeline loaded in {time.time() - t0:.1f}s", flush=True)
 
     image = upstream.preprocess_image(args.image, height=args.height, width=args.width)
-    audio_mel = upstream.preprocess_audio_mel(args.audio)
+    audio_mel = preprocess_audio_mel(args.audio, feature_extractor_dir)
     ids, mask = upstream.tokenize_prompt(args.prompt, variant_dir)
 
     text_hidden = pipeline.text_encoder(ids, mask=mask)
