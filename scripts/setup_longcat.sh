@@ -40,18 +40,10 @@ fi
 git -C "$ROOT/vendor/longcat-avatar-mlx" fetch --all --tags
 git -C "$ROOT/vendor/longcat-avatar-mlx" checkout "$LONGCAT_REV"
 
-# Install the MLX port plus runtime-only helpers. No CUDA / FlashAttention / Triton.
+# Install the orchestration app + LongCat runtime helpers, then the pinned MLX port.
+# No CUDA / FlashAttention / Triton are installed on this path.
+uv pip install --python "$PY" -e ".[longcat]"
 uv pip install --python "$PY" -e "$ROOT/vendor/longcat-avatar-mlx"
-uv pip install --python "$PY" \
-  "transformers>=4.48" \
-  "librosa>=0.11" \
-  "Pillow>=10" \
-  "imageio>=2.37" \
-  "imageio-ffmpeg>=0.6" \
-  "mlx-arsenal"
-
-# Make sure the orchestration app itself is current too.
-uv pip install --python "$PY" -e .
 
 "$PY" scripts/setup_longcat_models.py --variant "$VARIANT"
 
