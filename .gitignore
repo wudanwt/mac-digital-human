@@ -9,6 +9,7 @@ workspace/
 outputs/
 .cache/
 *.log
+
 samples/*.mp4
 samples/*.mov
 samples/*.wav
@@ -19,3 +20,10 @@ samples/*.jpg
 samples/*.jpeg
 samples/*.webp
 !samples/README.md
+
+profiles/*.json
+profiles/assets/
+!profiles/profile.example.json
+!profiles/README.md
+
+benchmarks/local/
