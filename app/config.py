@@ -30,6 +30,12 @@ class Settings:
     longcat_width: int = int(os.getenv("LONGCAT_WIDTH", "832"))
     longcat_num_frames: int = int(os.getenv("LONGCAT_NUM_FRAMES", "93"))
     longcat_fps: int = int(os.getenv("LONGCAT_FPS", "25"))
+    longcat_default_prompt: str = os.getenv(
+        "LONGCAT_PROMPT",
+        "A professional Chinese male instructor speaking naturally to camera, "
+        "subtle head movement, natural hand gestures, calm confident expression, "
+        "clean modern training studio, realistic lighting.",
+    )
 
     @property
     def default_variant(self) -> str:
