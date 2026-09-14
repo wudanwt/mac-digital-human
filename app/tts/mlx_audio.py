@@ -4,9 +4,7 @@ import gc
 from dataclasses import dataclass
 from pathlib import Path
 
-
-class TTSError(RuntimeError):
-    pass
+from .base import TTSError
 
 
 @dataclass(frozen=True)
@@ -21,15 +19,9 @@ class TTSConfig:
 
 
 class MLXAudioTTS:
-    """Small adapter around Blaizzy/mlx-audio.
+    """Premium Qwen3-TTS adapter around Blaizzy/mlx-audio."""
 
-    Two modes are supported through one interface:
-    - no reference audio: Qwen3-TTS CustomVoice preset speaker
-    - reference audio + transcript: Qwen3-TTS Base zero-shot voice cloning
-
-    Imports are intentionally lazy so normal MuseTalk/LongCat use does not
-    require the optional TTS stack to be installed.
-    """
+    name = "qwen3"
 
     def __init__(self, config: TTSConfig | None = None) -> None:
         self.config = config or TTSConfig()
@@ -44,7 +36,7 @@ class MLXAudioTTS:
         except Exception:
             installed = False
         return {
-            "provider": "mlx_audio",
+            "provider": self.name,
             "ready": installed,
             "model": self.config.model,
             "clone_model": self.config.clone_model,
@@ -71,7 +63,7 @@ class MLXAudioTTS:
         try:
             from mlx_audio.tts.utils import load_model
         except Exception as exc:  # pragma: no cover - depends on optional local install
-            raise TTSError("mlx-audio is not installed; run: bash scripts/setup_tts.sh") from exc
+            raise TTSError("mlx-audio is not installed; run: bash scripts/setup_qwen3_tts.sh") from exc
         self._model = load_model(model_id)
         self._loaded_model_id = model_id
         return self._model
