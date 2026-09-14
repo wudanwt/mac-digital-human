@@ -7,6 +7,7 @@ cd "$ROOT"
 MLX_REV="${MLX_REV:-c6eb30ebd1ed4d043983209813370153de9346bf}"
 MUSETALK_REV="${MUSETALK_REV:-8ca7d1884cf5c1c766dcd0365b069c96d75707cf}"
 VARIANT="${VARIANT:-q8}"
+WITH_LONGCAT="${WITH_LONGCAT:-0}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "[WARN] 本安装器针对 Apple Silicon macOS 设计。"
@@ -63,9 +64,18 @@ uv pip install --python "$PY" \
 "$PY" scripts/setup_models.py --variant "$VARIANT"
 
 echo
-"$PY" scripts/check_runtime.py --variant "$VARIANT" || true
+"$PY" scripts/check_runtime.py --engine musetalk --variant "$VARIANT" || true
 
-echo
-echo "安装完成。"
+if [[ "$WITH_LONGCAT" == "1" ]]; then
+  echo
+  echo "[optional] installing LongCat Avatar 1.5 MLX"
+  LONGCAT_VARIANT="${LONGCAT_VARIANT:-q4-merged}" bash scripts/setup_longcat.sh
+else
+  echo
+  echo "MuseTalk 安装完成。"
+  echo "如需高质量 LongCat 引擎：bash scripts/setup_longcat.sh"
+  echo "或一次安装双引擎：WITH_LONGCAT=1 bash scripts/setup.sh"
+fi
+
 echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
 echo "Web: bash scripts/run_web.sh"
