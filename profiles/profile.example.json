@@ -2,6 +2,7 @@
   "id": "example-instructor",
   "name": "示例讲师",
   "image": "../samples/ref.png",
+  "master_video": "../samples/master.mp4",
   "prompt_preset": "energy_training_studio",
   "prompt": "",
   "tts": {
