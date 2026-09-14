@@ -1,12 +1,9 @@
 {
   "id": "energy-market-demo",
   "title": "能源市场化业务示例课程",
+  "profile": "example-instructor",
   "prompt_preset": "energy_training_studio",
   "longcat_max_frames": 125,
-  "assets": {
-    "master_video": "../samples/master.mp4",
-    "reference_image": "../samples/ref.png"
-  },
   "tts": {
     "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
     "voice": "Dylan",
