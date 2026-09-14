@@ -1,7 +1,7 @@
 [project]
 name = "mac-digital-human"
-version = "0.2.0"
-description = "Apple Silicon local digital-human orchestration for MuseTalk-MLX and LongCat Avatar MLX"
+version = "0.3.0"
+description = "Apple Silicon local digital-human production pipeline for MuseTalk, LongCat and MLX-Audio"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi>=0.116",
@@ -10,6 +10,7 @@ dependencies = [
   "huggingface-hub>=0.34",
   "pydantic>=2.11",
   "rich>=14.0",
+  "psutil>=6.0",
 ]
 
 [project.optional-dependencies]
