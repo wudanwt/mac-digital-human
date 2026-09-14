@@ -5,10 +5,9 @@
   "prompt_preset": "energy_training_studio",
   "longcat_max_frames": 125,
   "tts": {
-    "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
-    "voice": "Dylan",
-    "language": "Chinese",
-    "instruct": "专业、自然、清晰的企业培训普通话，语速适中，有交流感。"
+    "provider": "audio8",
+    "voice": "default",
+    "threads": 5
   },
   "segments": [
     {
