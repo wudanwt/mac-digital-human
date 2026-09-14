@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,9 +52,22 @@ class MLXAudioTTS:
             "clone_enabled": bool(self.config.ref_audio),
         }
 
+    def release(self) -> None:
+        self._model = None
+        self._loaded_model_id = None
+        gc.collect()
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:
+            pass
+
     def _load(self, model_id: str):
         if self._model is not None and self._loaded_model_id == model_id:
             return self._model
+        if self._model is not None:
+            self.release()
         try:
             from mlx_audio.tts.utils import load_model
         except Exception as exc:  # pragma: no cover - depends on optional local install
