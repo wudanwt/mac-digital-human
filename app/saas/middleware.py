@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from collections import defaultdict, deque
 from threading import Lock
@@ -12,7 +13,7 @@ from .settings import saas_settings
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Small rate limiter with Redis in cloud and process-local fallback in dev."""
+    """Rate limiter with Redis in cloud and process-local fallback in development."""
 
     def __init__(self, app) -> None:
         super().__init__(app)
@@ -32,8 +33,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _identity(request: Request) -> str:
         auth = request.headers.get("authorization", "")
         if auth:
-            # Hashing is not needed here; the value only forms an internal key.
-            return f"token:{hash(auth)}"
+            digest = hashlib.sha256(auth.encode("utf-8")).hexdigest()[:32]
+            return f"token:{digest}"
         client = request.client.host if request.client else "unknown"
         return f"ip:{client}"
 
@@ -72,4 +73,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+            "connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+            "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        )
+        if saas_settings.is_production:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
