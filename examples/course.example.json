@@ -3,11 +3,9 @@
   "title": "能源市场化业务示例课程",
   "profile": "example-instructor",
   "prompt_preset": "energy_training_studio",
-  "longcat_max_frames": 125,
   "tts": {
-    "provider": "audio8",
-    "voice": "default",
-    "threads": 5
+    "provider": "cosyvoice2",
+    "voice": "wudan"
   },
   "segments": [
     {

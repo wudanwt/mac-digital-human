@@ -4,11 +4,11 @@ New code should import from ``app.engines``. This module remains so existing
 scripts/tests using ``app.engine`` continue to work.
 """
 
-from .engines import EngineError, LongCatMLXEngine, MuseTalkMLXEngine, RenderResult
+from .engines import EngineError, MuseTalkMLXEngine, RenderResult
 
 __all__ = [
     "EngineError",
     "RenderResult",
     "MuseTalkMLXEngine",
-    "LongCatMLXEngine",
 ]
+

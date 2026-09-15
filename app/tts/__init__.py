@@ -1,13 +1,10 @@
-from .audio8_onnx import Audio8Config, Audio8ONNXTTS
 from .base import TTSError, TTSProvider
-from .mlx_audio import MLXAudioTTS, TTSConfig
+from .cosyvoice import CosyVoiceConfig, CosyVoiceTTS
 from .registry import create_tts, infer_provider
 
 __all__ = [
-    "Audio8Config",
-    "Audio8ONNXTTS",
-    "MLXAudioTTS",
-    "TTSConfig",
+    "CosyVoiceConfig",
+    "CosyVoiceTTS",
     "TTSError",
     "TTSProvider",
     "create_tts",

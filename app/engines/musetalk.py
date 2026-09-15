@@ -114,26 +114,14 @@ class MuseTalkMLXEngine:
 
         job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         work = settings.workspace_dir / job_id
-        frames = work / "frames"
         work.mkdir(parents=True, exist_ok=True)
-        frames.mkdir(parents=True, exist_ok=True)
         log = work / "render.log"
 
-        normalized_video = work / "master_25fps.mp4"
         normalized_audio = work / "voice_16k.wav"
-        coords = work / "coords.pkl"
         final = output or (settings.outputs_dir / job_id / "result.mp4")
         final.parent.mkdir(parents=True, exist_ok=True)
 
         started = time.time()
-        self._run(
-            [
-                "ffmpeg", "-y", "-i", str(video), "-vf", f"fps={settings.musetalk_target_fps}",
-                "-an", "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p",
-                str(normalized_video),
-            ],
-            log_file=log,
-        )
         self._run(
             [
                 "ffmpeg", "-y", "-i", str(audio), "-vn", "-ar", "16000", "-ac", "1",
@@ -142,22 +130,58 @@ class MuseTalkMLXEngine:
             log_file=log,
         )
 
+        # Check master video pre-extracted cache
+        import hashlib
+        stat = video.stat()
+        video_hash = hashlib.md5(f"{video.resolve()}:{stat.st_size}:{stat.st_mtime}".encode()).hexdigest()[:12]
+        cache_dir = settings.workspace_dir / "cache" / "musetalk" / video_hash
+        cache_coords = cache_dir / "coords.pkl"
+        cache_frames = cache_dir / "frames"
+        cache_video = cache_dir / "master_25fps.mp4"
+
+        repaired = 0
+        if cache_coords.exists() and cache_frames.exists() and cache_video.exists():
+            coords = cache_coords
+            if log:
+                with log.open("a", encoding="utf-8") as lf:
+                    lf.write(f"\n[cache hit] Reusing pre-extracted face coordinates from {cache_coords}\n")
+        else:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_frames.mkdir(parents=True, exist_ok=True)
+            self._run(
+                [
+                    "ffmpeg", "-y", "-i", str(video), "-vf", f"fps={settings.musetalk_target_fps}",
+                    "-an", "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p",
+                    str(cache_video),
+                ],
+                log_file=log,
+            )
+            mlx = settings.musetalk_mlx_dir
+            extract_script = settings.root / "scripts" / "extract_landmarks.py"
+            if not extract_script.exists():
+                extract_script = mlx / "scripts" / "extract_landmarks.py"
+            self._run(
+                [
+                    sys.executable,
+                    str(extract_script),
+                    str(cache_video), str(cache_frames), str(cache_coords),
+                ],
+                cwd=mlx,
+                log_file=log,
+            )
+            self._repair_missing_coords(cache_coords, log)
+            coords = cache_coords
+
         mlx = settings.musetalk_mlx_dir
-        self._run(
-            [
-                sys.executable,
-                str(mlx / "scripts" / "extract_landmarks.py"),
-                str(normalized_video), str(frames), str(coords),
-            ],
-            cwd=mlx,
-            log_file=log,
-        )
-        repaired = self._repair_missing_coords(coords, log)
+        final_abs = Path(final).resolve()
+        final_abs.parent.mkdir(parents=True, exist_ok=True)
         self._run(
             [
                 sys.executable,
                 str(mlx / "scripts" / "build_video.py"),
-                str(coords), str(normalized_audio), str(final),
+                str(Path(coords).resolve()),
+                str(Path(normalized_audio).resolve()),
+                str(final_abs),
                 "--variant", variant,
             ],
             cwd=mlx,
