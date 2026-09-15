@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import text
 
 from .admin_api import router as admin_router
 from .assets_api import router as assets_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
 from .billing_api import router as billing_router
+from .database import engine
 from .settings import saas_settings
+from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
 
 
@@ -16,14 +19,56 @@ router = APIRouter(prefix=saas_settings.api_prefix)
 
 @router.get("/health", tags=["system"])
 def health() -> dict:
-    return {
-        "status": "ok",
+    checks: dict[str, str] = {}
+    failures: list[str] = []
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = "error"
+        failures.append(f"database: {exc}")
+
+    if saas_settings.worker_backend == "redis":
+        try:
+            import redis
+
+            client = redis.Redis.from_url(saas_settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+            client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = "error"
+            failures.append(f"redis: {exc}")
+    else:
+        checks["redis"] = "not-required"
+
+    try:
+        client = getattr(object_store, "client", None)
+        bucket = getattr(object_store, "bucket", None)
+        if client is not None and bucket:
+            client.head_bucket(Bucket=bucket)
+        else:
+            root = getattr(object_store, "root", None)
+            if root is not None and not root.exists():
+                raise RuntimeError("local storage root missing")
+        checks["storage"] = "ok"
+    except Exception as exc:
+        checks["storage"] = "error"
+        failures.append(f"storage: {exc}")
+
+    payload = {
+        "status": "ok" if not failures else "degraded",
         "service": saas_settings.app_name,
         "environment": saas_settings.environment,
         "worker_backend": saas_settings.worker_backend,
         "storage_backend": saas_settings.storage_backend,
         "version": "0.5.0",
+        "checks": checks,
     }
+    if failures:
+        raise HTTPException(status_code=503, detail={**payload, "failures": failures})
+    return payload
 
 
 @router.get("/capabilities", tags=["system"])
@@ -39,8 +84,10 @@ def capabilities() -> dict:
         "usage_quota": True,
         "plans": True,
         "admin": True,
-        "cuda_worker": "adapter-ready-not-benchmarked",
-        "payment_providers": ["manual", "mock", "wechat-adapter", "alipay-adapter"],
+        "consent_records": True,
+        "ai_content_label": saas_settings.require_ai_label,
+        "cuda_worker": "skipped-pending-hardware-validation",
+        "payment_providers": list(saas_settings.payment_providers),
     }
 
 
