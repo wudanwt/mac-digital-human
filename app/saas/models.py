@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
 
@@ -155,6 +155,7 @@ class RenderJobRecord(Base):
     stage: Mapped[str] = mapped_column(String(80), default="queued")
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
     output_uri: Mapped[str | None] = mapped_column(String(1200), nullable=True)
+    output_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), nullable=True, index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     estimated_seconds: Mapped[int] = mapped_column(Integer, default=0)
     video_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -177,6 +178,20 @@ class UsageLedger(Base):
     units: Mapped[float] = mapped_column(Float)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ConsentRecord(Base):
+    __tablename__ = "consent_records"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    subject_type: Mapped[str] = mapped_column(String(40), index=True)
+    subject_id: Mapped[str] = mapped_column(String(64), index=True)
+    consent_type: Mapped[str] = mapped_column(String(60), index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditLog(Base):
