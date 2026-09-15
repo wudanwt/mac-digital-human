@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libreoffice-impress \
+    fonts-noto-cjk \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+COPY alembic.ini /app/alembic.ini
+COPY migrations /app/migrations
+COPY app /app/app
+COPY scripts /app/scripts
+
+RUN python -m pip install --upgrade pip && pip install '.[saas]'
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/workspace /app/outputs /app/workspace/saas-assets \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8918
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8918/api/saas/health || exit 1
+
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.saas_main:app --host 0.0.0.0 --port 8918 --proxy-headers --forwarded-allow-ips='*'"]

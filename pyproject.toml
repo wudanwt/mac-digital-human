@@ -1,7 +1,7 @@
 [project]
 name = "mac-digital-human"
-version = "0.3.0"
-description = "Apple Silicon local digital-human production pipeline for MuseTalk and CosyVoice 2.0"
+version = "0.5.0"
+description = "Digital-human course production platform for Apple Silicon and SaaS cloud deployment"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi>=0.116",
@@ -38,12 +38,27 @@ cosyvoice = [
   "wetext>=0.0.4",
   "x-transformers>=2.11.24",
 ]
+saas = [
+  "redis>=5.0",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.2",
+  "boto3>=1.35",
+  "oss2>=2.19",
+  "cos-python-sdk-v5>=1.9.35",
+  "PyJWT>=2.9",
+  "email-validator>=2.2",
+]
 dev = [
   "pytest>=8",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
 mac-avatar = "app.cli:main"
+saas-worker = "app.saas.worker:run_forever"
+saas-bootstrap = "app.saas.bootstrap:main"
+saas-manage = "app.saas.manage:main"
 
 [tool.uv]
 package = true

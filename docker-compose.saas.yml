@@ -1,0 +1,85 @@
+# Local/acceptance stack only. Production must use managed/private credentials,
+# object storage, TLS reverse proxy and SAAS_ENV=production validation.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${SAAS_DB_NAME:-digital_human}
+      POSTGRES_USER: ${SAAS_DB_USER:-digital_human}
+      POSTGRES_PASSWORD: ${SAAS_DB_PASSWORD:-local-dev-only-password}
+    volumes:
+      - saas-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SAAS_DB_USER:-digital_human} -d ${SAAS_DB_NAME:-digital_human}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - saas-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.saas
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SAAS_DB_USER:-digital_human}:${SAAS_DB_PASSWORD:-local-dev-only-password}@postgres:5432/${SAAS_DB_NAME:-digital_human}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.saas_main:app --host 0.0.0.0 --port 8918 --proxy-headers"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8918:8918"
+    volumes:
+      - saas-outputs:/app/outputs
+      - saas-workspace:/app/workspace
+    restart: unless-stopped
+
+  worker-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.saas
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SAAS_DB_USER:-digital_human}:${SAAS_DB_PASSWORD:-local-dev-only-password}@postgres:5432/${SAAS_DB_NAME:-digital_human}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      SAAS_RENDERER: mock
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
+    command: ["python", "-m", "app.saas.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - saas-outputs:/app/outputs
+      - saas-workspace:/app/workspace
+    restart: unless-stopped
+    profiles: ["mock-worker"]
+
+volumes:
+  saas-postgres:
+  saas-redis:
+  saas-outputs:
+  saas-workspace:
