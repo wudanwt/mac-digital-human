@@ -44,14 +44,7 @@ def health() -> dict:
         checks["redis"] = "not-required"
 
     try:
-        client = getattr(object_store, "client", None)
-        bucket = getattr(object_store, "bucket", None)
-        if client is not None and bucket:
-            client.head_bucket(Bucket=bucket)
-        else:
-            root = getattr(object_store, "root", None)
-            if root is not None and not root.exists():
-                raise RuntimeError("local storage root missing")
+        object_store.healthcheck()
         checks["storage"] = "ok"
     except Exception as exc:
         checks["storage"] = "error"
@@ -86,6 +79,7 @@ def capabilities() -> dict:
         "admin": True,
         "consent_records": True,
         "ai_content_label": saas_settings.require_ai_label,
+        "object_storage": ["s3", "minio", "oss", "cos"],
         "cuda_worker": "skipped-pending-hardware-validation",
         "payment_providers": list(saas_settings.payment_providers),
     }
