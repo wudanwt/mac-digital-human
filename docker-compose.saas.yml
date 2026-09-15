@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: digital_human
+      POSTGRES_USER: digital_human
+      POSTGRES_PASSWORD: digital_human
+    volumes:
+      - saas-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U digital_human -d digital_human"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - saas-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.saas
+    environment:
+      DATABASE_URL: postgresql+psycopg://digital_human:digital_human@postgres:5432/digital_human
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8918:8918"
+    volumes:
+      - saas-outputs:/app/outputs
+      - saas-workspace:/app/workspace
+
+volumes:
+  saas-postgres:
+  saas-redis:
+  saas-outputs:
+  saas-workspace:
