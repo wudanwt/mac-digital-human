@@ -1,6 +1,6 @@
 [project]
 name = "mac-digital-human"
-version = "0.4.0"
+version = "0.5.0"
 description = "Digital-human course production platform for Apple Silicon and SaaS cloud deployment"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -41,8 +41,10 @@ cosyvoice = [
 saas = [
   "redis>=5.0",
   "sqlalchemy>=2.0",
+  "alembic>=1.13",
   "psycopg[binary]>=3.2",
   "boto3>=1.35",
+  "PyJWT>=2.9",
 ]
 dev = [
   "pytest>=8",
@@ -52,6 +54,7 @@ dev = [
 [project.scripts]
 mac-avatar = "app.cli:main"
 saas-worker = "app.saas.worker:run_forever"
+saas-bootstrap = "app.saas.bootstrap:main"
 
 [tool.uv]
 package = true
