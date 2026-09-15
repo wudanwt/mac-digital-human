@@ -68,16 +68,14 @@ def _refresh_subscription(db: Session, sub: Subscription) -> Subscription:
         return sub
 
     plan = db.get(Plan, sub.plan_code)
-    if sub.plan_code == "free" and plan is not None:
-        sub.status = "active"
+    if sub.plan_code == "free" and plan is not None and sub.status == "active":
         sub.remaining_seconds = plan.monthly_minutes * 60
         sub.period_started_at = now
         sub.period_ends_at = now + timedelta(days=30)
-    else:
+    elif sub.plan_code != "free":
         # Paid plans are one-period entitlements until a new paid order renews them.
         sub.status = "expired"
         sub.remaining_seconds = 0
-        sub.period_started_at = sub.period_started_at or now
     return sub
 
 
@@ -86,12 +84,16 @@ def active_subscription(db: Session, tenant_id: str, *, initial_seconds: int | N
     if sub is None:
         plan = db.get(Plan, "free")
         seconds = (plan.monthly_minutes if plan else saas_settings.free_plan_minutes) * 60
+        status = "active"
         if initial_seconds is not None:
             seconds = max(0, int(initial_seconds))
+            if seconds == 0:
+                status = "inactive"
         now = utcnow()
         sub = Subscription(
             tenant_id=tenant_id,
             plan_code="free",
+            status=status,
             remaining_seconds=seconds,
             period_started_at=now,
             period_ends_at=now + timedelta(days=30),
@@ -116,10 +118,7 @@ def enforce_storage_limit(db: Session, tenant_id: str, *, incoming_bytes: int = 
     )
     limit = max(0, plan.storage_gb) * 1024**3
     if used + max(0, int(incoming_bytes)) > limit:
-        raise HTTPException(
-            status_code=402,
-            detail=f"Storage quota exceeded ({plan.storage_gb} GB plan limit)",
-        )
+        raise HTTPException(status_code=402, detail=f"Storage quota exceeded ({plan.storage_gb} GB plan limit)")
 
 
 def enforce_avatar_limit(db: Session, tenant_id: str) -> None:
@@ -131,15 +130,12 @@ def enforce_avatar_limit(db: Session, tenant_id: str) -> None:
 
 def enforce_member_limit(db: Session, tenant_id: str) -> None:
     plan = plan_for_tenant(db, tenant_id)
-    count = int(
-        db.scalar(select(func.count()).select_from(Membership).where(Membership.tenant_id == tenant_id)) or 0
-    )
+    count = int(db.scalar(select(func.count()).select_from(Membership).where(Membership.tenant_id == tenant_id)) or 0)
     if count >= plan.max_members:
         raise HTTPException(status_code=402, detail=f"Workspace member limit reached ({plan.max_members})")
 
 
 def estimate_script_seconds(script: list[dict] | None, *, fallback: int | None = None) -> int:
-    """Conservative server-side reservation estimate; never trust the client alone."""
     fallback = max(1, int(fallback or saas_settings.default_render_estimate_seconds))
     if not script:
         return fallback
@@ -152,15 +148,12 @@ def estimate_script_seconds(script: list[dict] | None, *, fallback: int | None =
         if not text:
             continue
         usable = True
-        # ~4 Chinese chars/sec is intentionally conservative; minimum 4 sec per narrated slide.
         total += max(4.0, len(text) / 4.0)
     return max(fallback if not usable else 1, int(math.ceil(total)))
 
 
 def _ledger_exists(db: Session, *, job_id: str, kind: str) -> bool:
-    return bool(
-        db.scalar(select(UsageLedger.id).where(UsageLedger.job_id == job_id, UsageLedger.kind == kind).limit(1))
-    )
+    return bool(db.scalar(select(UsageLedger.id).where(UsageLedger.job_id == job_id, UsageLedger.kind == kind).limit(1)))
 
 
 def reserve_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id: str, seconds: int) -> None:
@@ -173,16 +166,7 @@ def reserve_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id:
     if sub.remaining_seconds < seconds:
         raise HTTPException(status_code=402, detail="Insufficient render minutes")
     sub.remaining_seconds -= seconds
-    db.add(
-        UsageLedger(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            job_id=job_id,
-            kind="render_reserved_seconds",
-            units=float(seconds),
-            details_json=json.dumps({"reserved": True}),
-        )
-    )
+    db.add(UsageLedger(tenant_id=tenant_id, user_id=user_id, job_id=job_id, kind="render_reserved_seconds", units=float(seconds), details_json=json.dumps({"reserved": True})))
 
 
 def refund_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id: str, seconds: int) -> None:
@@ -191,16 +175,7 @@ def refund_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id: 
     seconds = max(0, int(seconds))
     sub = active_subscription(db, tenant_id)
     sub.remaining_seconds += seconds
-    db.add(
-        UsageLedger(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            job_id=job_id,
-            kind="render_refund_seconds",
-            units=float(seconds),
-            details_json=json.dumps({"refund": True}),
-        )
-    )
+    db.add(UsageLedger(tenant_id=tenant_id, user_id=user_id, job_id=job_id, kind="render_refund_seconds", units=float(seconds), details_json=json.dumps({"refund": True})))
 
 
 def reconcile_render_seconds(
@@ -212,7 +187,6 @@ def reconcile_render_seconds(
     reserved_seconds: int,
     actual_seconds: float | None,
 ) -> int:
-    """Settle against actual output duration. Positive delta consumes more; negative refunds."""
     if _ledger_exists(db, job_id=job_id, kind="render_settlement_seconds"):
         return 0
     actual = max(1, int(math.ceil(float(actual_seconds or reserved_seconds or 1))))
@@ -220,20 +194,10 @@ def reconcile_render_seconds(
     delta = actual - reserved
     sub = active_subscription(db, tenant_id)
     if delta > 0:
-        # Never give free overage. A negative balance blocks subsequent renders until topped up.
         sub.remaining_seconds -= delta
     elif delta < 0:
         sub.remaining_seconds += -delta
-    db.add(
-        UsageLedger(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            job_id=job_id,
-            kind="render_settlement_seconds",
-            units=float(delta),
-            details_json=json.dumps({"reserved": reserved, "actual": actual, "delta": delta}),
-        )
-    )
+    db.add(UsageLedger(tenant_id=tenant_id, user_id=user_id, job_id=job_id, kind="render_settlement_seconds", units=float(delta), details_json=json.dumps({"reserved": reserved, "actual": actual, "delta": delta})))
     return delta
 
 
@@ -247,39 +211,20 @@ def grant_seconds(
 ) -> Subscription:
     sub = active_subscription(db, tenant_id)
     sub.remaining_seconds += int(seconds)
-    db.add(
-        UsageLedger(
-            tenant_id=tenant_id,
-            user_id=actor_user_id,
-            kind="credit_grant_seconds",
-            units=float(seconds),
-            details_json=json.dumps({"reason": reason}, ensure_ascii=False),
-        )
-    )
+    if seconds > 0 and sub.status == "inactive":
+        sub.status = "active"
+        sub.period_started_at = utcnow()
+        sub.period_ends_at = sub.period_started_at + timedelta(days=30)
+    db.add(UsageLedger(tenant_id=tenant_id, user_id=actor_user_id, kind="credit_grant_seconds", units=float(seconds), details_json=json.dumps({"reason": reason}, ensure_ascii=False)))
     return sub
 
 
 def usage_summary(db: Session, tenant_id: str) -> dict:
     sub = active_subscription(db, tenant_id)
     plan = db.get(Plan, sub.plan_code)
-    reserved = db.scalar(
-        select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(
-            UsageLedger.tenant_id == tenant_id,
-            UsageLedger.kind == "render_reserved_seconds",
-        )
-    ) or 0.0
-    settled = db.scalar(
-        select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(
-            UsageLedger.tenant_id == tenant_id,
-            UsageLedger.kind == "render_settlement_seconds",
-        )
-    ) or 0.0
-    refunded = db.scalar(
-        select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(
-            UsageLedger.tenant_id == tenant_id,
-            UsageLedger.kind == "render_refund_seconds",
-        )
-    ) or 0.0
+    reserved = db.scalar(select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(UsageLedger.tenant_id == tenant_id, UsageLedger.kind == "render_reserved_seconds")) or 0.0
+    settled = db.scalar(select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(UsageLedger.tenant_id == tenant_id, UsageLedger.kind == "render_settlement_seconds")) or 0.0
+    refunded = db.scalar(select(func.coalesce(func.sum(UsageLedger.units), 0.0)).where(UsageLedger.tenant_id == tenant_id, UsageLedger.kind == "render_refund_seconds")) or 0.0
     consumed = float(reserved) + float(settled) - float(refunded)
     return {
         "plan_code": sub.plan_code,
@@ -296,9 +241,7 @@ def usage_summary(db: Session, tenant_id: str) -> dict:
 
 
 def ensure_membership(db: Session, *, tenant_id: str, user_id: str) -> Membership:
-    membership = db.scalar(
-        select(Membership).where(Membership.tenant_id == tenant_id, Membership.user_id == user_id)
-    )
+    membership = db.scalar(select(Membership).where(Membership.tenant_id == tenant_id, Membership.user_id == user_id))
     if membership is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
     return membership
