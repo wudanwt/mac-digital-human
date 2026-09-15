@@ -10,7 +10,7 @@ from .settings import saas_settings
 DEFAULT_PLANS = (
     dict(code="free", name="体验版", monthly_minutes=30, storage_gb=2, max_avatars=1, max_members=1, priority=0, price_cny=0),
     dict(code="pro", name="专业版", monthly_minutes=600, storage_gb=50, max_avatars=5, max_members=3, priority=10, price_cny=199),
-    dict(code="business", name="企业版", monthly_minutes=3000, storage_gb=500, max_avatars=30, max_members=20, priority=20, price_cny=699),
+    dict(code="business", name="企业版", monthly_minutes=3000, storage_gb=500, max_avatars=30, max_members=20, priority=50, price_cny=699),
 )
 
 
