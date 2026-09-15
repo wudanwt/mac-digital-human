@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Annotated
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .domain import RenderJob, TenantContext
@@ -41,6 +41,9 @@ def _context(
     return TenantContext(tenant_id=tenant_id, user_id=user_id)
 
 
+TenantDependency = Annotated[TenantContext, Depends(_context)]
+
+
 def _response(job: RenderJob) -> RenderJobResponse:
     data = job.to_dict()
     data.pop("payload", None)
@@ -58,7 +61,7 @@ def saas_health() -> dict[str, Any]:
 
 
 @router.post("/jobs", response_model=RenderJobResponse, status_code=202)
-def create_render_job(body: RenderJobCreate, context: TenantContext = _context) -> RenderJobResponse:
+def create_render_job(body: RenderJobCreate, context: TenantDependency) -> RenderJobResponse:
     job = RenderJob(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
@@ -70,7 +73,7 @@ def create_render_job(body: RenderJobCreate, context: TenantContext = _context) 
 
 
 @router.get("/jobs/{job_id}", response_model=RenderJobResponse)
-def get_render_job(job_id: str, context: TenantContext = _context) -> RenderJobResponse:
+def get_render_job(job_id: str, context: TenantDependency) -> RenderJobResponse:
     job = job_queue.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
