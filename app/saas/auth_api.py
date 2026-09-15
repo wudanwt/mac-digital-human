@@ -4,13 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .models import Membership, Subscription, Tenant, User
+from .models import Membership, Tenant, User
 from .security import Principal, create_access_token, get_principal, hash_password, require_owner, verify_password
-from .services import active_subscription, audit, ensure_membership, unique_slug
+from .services import active_subscription, audit, enforce_member_limit, ensure_membership, unique_slug
 from .settings import saas_settings
 
 
@@ -61,7 +61,12 @@ def _token_response(user: User, tenant: Tenant, membership: Membership) -> Token
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(body: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> TokenResponse:
+    if not saas_settings.allow_public_registration:
+        raise HTTPException(status_code=403, detail="Public registration is disabled")
     email = body.email.lower().strip()
+    if email in {e.lower() for e in saas_settings.admin_emails}:
+        # Never let an unauthenticated public-registration request claim a reserved admin identity.
+        raise HTTPException(status_code=403, detail="This email is reserved for platform administration")
     if db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Email is already registered")
     try:
@@ -73,7 +78,7 @@ def register(body: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> 
         email=email,
         password_hash=password_hash,
         display_name=body.display_name.strip() or email.split("@", 1)[0],
-        is_superuser=email in {e.lower() for e in saas_settings.admin_emails},
+        is_superuser=False,
     )
     db.add(user)
     db.flush()
@@ -83,9 +88,7 @@ def register(body: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> 
     membership = Membership(tenant_id=tenant.id, user_id=user.id, role="owner")
     db.add(membership)
     db.flush()
-    sub = active_subscription(db, tenant.id)
-    if sub.remaining_seconds <= 0:
-        sub.remaining_seconds = saas_settings.free_plan_minutes * 60
+    active_subscription(db, tenant.id)
     audit(db, action="auth.register", tenant_id=tenant.id, user_id=user.id, target_type="user", target_id=user.id)
     db.commit()
     return _token_response(user, tenant, membership)
@@ -117,6 +120,8 @@ def me(
 ) -> dict:
     user = db.get(User, principal.user_id)
     tenant = db.get(Tenant, principal.tenant_id)
+    if user is None or tenant is None:
+        raise HTTPException(status_code=401, detail="Session workspace unavailable")
     memberships = db.scalars(select(Membership).where(Membership.user_id == principal.user_id)).all()
     workspace_ids = [m.tenant_id for m in memberships]
     tenants = db.scalars(select(Tenant).where(Tenant.id.in_(workspace_ids))).all() if workspace_ids else []
@@ -144,7 +149,7 @@ def switch_workspace(
     membership = ensure_membership(db, tenant_id=tenant_id, user_id=principal.user_id)
     user = db.get(User, principal.user_id)
     tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
+    if user is None or tenant is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return _token_response(user, tenant, membership)
 
@@ -169,12 +174,18 @@ def create_workspace(
     principal: Annotated[Principal, Depends(get_principal)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
+    existing_count = int(
+        db.scalar(select(func.count()).select_from(Membership).where(Membership.user_id == principal.user_id)) or 0
+    )
     tenant = Tenant(name=body.name.strip(), slug=unique_slug(db, body.name), owner_user_id=principal.user_id)
     db.add(tenant)
     db.flush()
     membership = Membership(tenant_id=tenant.id, user_id=principal.user_id, role="owner")
     db.add(membership)
-    active_subscription(db, tenant.id)
+    db.flush()
+    # Free trial credits are granted only to the configured number of first workspaces per user.
+    initial = None if existing_count < saas_settings.max_free_workspaces_per_user else 0
+    active_subscription(db, tenant.id, initial_seconds=initial)
     audit(db, action="workspace.create", tenant_id=tenant.id, user_id=principal.user_id, target_type="tenant", target_id=tenant.id)
     db.commit()
     return {"id": tenant.id, "name": tenant.name, "slug": tenant.slug, "role": membership.role}
@@ -200,16 +211,25 @@ def add_member(
     principal: Annotated[Principal, Depends(require_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
+    tenant = db.get(Tenant, principal.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
     user = db.scalar(select(User).where(User.email == body.email.lower().strip()))
     if user is None:
         raise HTTPException(status_code=404, detail="User must register before being added")
     existing = db.scalar(
         select(Membership).where(Membership.tenant_id == principal.tenant_id, Membership.user_id == user.id)
     )
-    if existing:
+    if user.id == tenant.owner_user_id:
+        if existing is None:
+            raise HTTPException(status_code=409, detail="Workspace owner membership is inconsistent")
+        existing.role = "owner"
+        membership = existing
+    elif existing:
         existing.role = body.role
         membership = existing
     else:
+        enforce_member_limit(db, principal.tenant_id)
         membership = Membership(tenant_id=principal.tenant_id, user_id=user.id, role=body.role)
         db.add(membership)
     audit(
@@ -219,7 +239,7 @@ def add_member(
         user_id=principal.user_id,
         target_type="user",
         target_id=user.id,
-        details={"role": body.role},
+        details={"role": membership.role},
     )
     db.commit()
     return {"id": user.id, "email": user.email, "display_name": user.display_name, "role": membership.role}
@@ -231,8 +251,11 @@ def remove_member(
     principal: Annotated[Principal, Depends(require_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> None:
-    if user_id == principal.user_id:
-        raise HTTPException(status_code=400, detail="Workspace owner cannot remove self")
+    tenant = db.get(Tenant, principal.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if user_id == tenant.owner_user_id:
+        raise HTTPException(status_code=400, detail="Workspace owner cannot be removed")
     membership = db.scalar(
         select(Membership).where(Membership.tenant_id == principal.tenant_id, Membership.user_id == user_id)
     )
