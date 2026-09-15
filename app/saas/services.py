@@ -58,13 +58,23 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _refresh_subscription(db: Session, sub: Subscription) -> Subscription:
     now = utcnow()
-    if sub.period_ends_at is None:
-        sub.period_started_at = sub.period_started_at or now
+    period_end = _aware(sub.period_ends_at)
+    period_start = _aware(sub.period_started_at)
+    if period_end is None:
+        sub.period_started_at = period_start or now
         sub.period_ends_at = now + timedelta(days=30)
         return sub
-    if sub.period_ends_at > now:
+    if period_end > now:
         return sub
 
     plan = db.get(Plan, sub.plan_code)
@@ -73,7 +83,6 @@ def _refresh_subscription(db: Session, sub: Subscription) -> Subscription:
         sub.period_started_at = now
         sub.period_ends_at = now + timedelta(days=30)
     elif sub.plan_code != "free":
-        # Paid plans are one-period entitlements until a new paid order renews them.
         sub.status = "expired"
         sub.remaining_seconds = 0
     return sub
