@@ -82,7 +82,12 @@ class Principal:
 
 def decode_access_token(token: str) -> Principal:
     try:
-        payload = jwt.decode(token, saas_settings.jwt_secret, algorithms=[saas_settings.jwt_algorithm])
+        payload = jwt.decode(
+            token,
+            saas_settings.jwt_secret,
+            algorithms=[saas_settings.jwt_algorithm],
+            options={"require": ["sub", "tenant_id", "iat", "exp"]},
+        )
         return Principal(
             user_id=str(payload["sub"]),
             tenant_id=str(payload["tenant_id"]),
@@ -115,12 +120,19 @@ def get_principal(
     if membership is not None:
         principal.role = membership.role
     principal.is_superuser = user.is_superuser
+    principal.email = user.email
+    return principal
+
+
+def require_admin(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
+    if principal.role not in {"owner", "admin"} and not principal.is_superuser:
+        raise HTTPException(status_code=403, detail="Workspace admin role required")
     return principal
 
 
 def require_owner(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
-    if principal.role not in {"owner", "admin"} and not principal.is_superuser:
-        raise HTTPException(status_code=403, detail="Owner or admin role required")
+    if principal.role != "owner" and not principal.is_superuser:
+        raise HTTPException(status_code=403, detail="Workspace owner role required")
     return principal
 
 
