@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libreoffice-impress \
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+COPY app /app/app
+COPY scripts /app/scripts
+
+RUN python -m pip install --upgrade pip && pip install '.[saas]'
+
+RUN mkdir -p /app/workspace /app/outputs
+
+EXPOSE 8918
+CMD ["uvicorn", "app.saas_main:app", "--host", "0.0.0.0", "--port", "8918"]
