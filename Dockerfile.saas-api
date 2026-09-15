@@ -19,10 +19,14 @@ COPY app /app/app
 COPY scripts /app/scripts
 
 RUN python -m pip install --upgrade pip && pip install '.[saas]'
-RUN mkdir -p /app/workspace /app/outputs /app/workspace/saas-assets
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/workspace /app/outputs /app/workspace/saas-assets \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8918
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8918/api/saas/health || exit 1
 
-CMD ["uvicorn", "app.saas_main:app", "--host", "0.0.0.0", "--port", "8918", "--proxy-headers"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.saas_main:app --host 0.0.0.0 --port 8918 --proxy-headers --forwarded-allow-ips='*'"]
