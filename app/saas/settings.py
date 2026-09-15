@@ -75,6 +75,7 @@ class SaaSSettings:
         forbidden_secrets = {
             "dev-change-me-before-production",
             "replace-with-a-long-random-production-secret",
+            "CHANGE_ME_WITH_A_UNIQUE_RANDOM_SECRET",
             "ci-test-secret-not-for-production-1234567890",
         }
         if self.jwt_secret in forbidden_secrets or len(self.jwt_secret) < 32:
