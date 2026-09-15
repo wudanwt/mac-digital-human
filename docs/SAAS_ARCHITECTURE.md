@@ -1,260 +1,310 @@
-# SaaS 云端版架构设计
+# Digital Human SaaS 云端版
 
-> 分支：`feat/saas-cloud`
+> 开发分支：`feat/saas-cloud`
 >
-> 目标：在不破坏现有 Apple Silicon 本地版的前提下，把数字人微课生产链路拆成可多租户、可排队、可横向扩容、可接按量 GPU 的 SaaS 架构。
+> 本分支把原来的 Apple Silicon 单机数字人微课工作台拆成独立的多租户 SaaS 控制面。Mac 本地版继续留在 `main`，两条运行路径互不绑死。
 
-## 1. 现状与改造原则
+## 1. 当前已完成的 SaaS 产品能力
 
-当前本地版以 `FastAPI + 本机 JobManager + MuseTalk-MLX + CosyVoice + FFmpeg` 为核心，重任务在单机内串行执行。这个结构适合个人生产，但不适合多用户并发、跨机器调度和云端 GPU 弹性伸缩。
+### 用户与工作区
 
-SaaS 改造遵循四个原则：
+- 邮箱注册 / 登录
+- scrypt 密码哈希
+- JWT Access Token
+- 多工作区切换
+- Owner / Admin / Member 权限
+- 成员添加 / 移除
+- tenant 级数据隔离
+- 超级管理员运营权限
 
-1. `main` 的本地工作流继续可用，不把云依赖强塞给桌面版。
-2. 控制面与计算面分离：CPU API 常驻，GPU Worker 按需扩容。
-3. 用户文件和生成结果进入对象存储，不依赖单机磁盘。
-4. 所有生成任务都具备 tenant/user 边界，为后续套餐、额度、计费和企业空间做准备。
+### 素材中心
 
-## 2. 目标架构
+- PPT / 文档 / 图片 / 视频 / 音频上传
+- 上传大小限制与扩展名校验
+- tenant 隔离的对象 key
+- 本地对象存储开发模式
+- S3-compatible 私有对象存储
+- 临时签名下载 URL
+- Worker 素材 materialize
+- 素材删除
+
+### 数字人资产
+
+- 数字人 Profile
+- 图片人物资产
+- MuseTalk 母版视频资产
+- 默认克隆音色
+- Prompt / 人设描述
+- CosyVoice 声音 Profile
+- 参考录音与逐字稿
+
+### 课程工作台
+
+- 新建课程
+- PPT 关联
+- 数字人关联
+- 音色关联
+- 按页讲稿 JSON
+- 每页版式 / 自定义画布参数
+- 课程生成提交
+- 生成任务历史
+- 任务取消
+- 进度 / stage / error / output 状态
+
+### 队列与 Worker
+
+- InMemory 开发队列
+- Redis 跨机器任务队列
+- CPU API 与计算 Worker 分离
+- Mock Worker：无 GPU 即可完整测试 SaaS 流程
+- Local MLX Worker：Mac 上可跑完整数字人课程生产
+- Worker 自动同步数据库状态
+- 失败自动退款分钟额度
+- 输出自动上传对象存储
+- GPU seconds / video seconds 字段已预留
+
+Mac 本地完整课程 Worker 已串联：
 
 ```text
-Browser / App
-     |
-     v
-SaaS API (FastAPI)
-     |
-     +---- PostgreSQL   用户 / 租户 / 套餐 / 任务历史 / 计费
-     |
-     +---- Redis        实时状态 / 任务队列 / 限流
-     |
-     +---- Object Store PPT / 母版 / 声音 / 中间件 / 成片
-     |
-     v
-GPU Queue
-     |
-     +---- GPU Worker 1  MuseTalk CUDA
-     +---- GPU Worker 2  MuseTalk CUDA
-     +---- GPU Worker N  MuseTalk CUDA
-     |
-     v
-FFmpeg / subtitles / composer
-     |
-     v
-Object Store + CDN
+PPT
+ -> 页面解析 / 渲染
+ -> 每页讲稿
+ -> CosyVoice TTS
+ -> MuseTalk MLX
+ -> PPT + 数字人排版
+ -> FFmpeg concat
+ -> SRT subtitle track
+ -> MP4
+ -> Object Storage
 ```
 
-精品模式后续单独增加 LongCat Worker，不与普通 MuseTalk 队列绑死。
+Linux CUDA Worker 与 SaaS 控制面使用相同 `RenderHandler` 契约；CUDA 环境单独部署，避免把数 GB 的 AI 运行环境塞进常驻 API 容器。
 
-## 3. 当前分支已经落地
+### 套餐与用量
 
-### 3.1 独立 SaaS 入口
+默认套餐：
 
-- `app/saas_main.py`
-- 不直接改写现有 `app/main.py`
-- 启动：`uvicorn app.saas_main:app --host 0.0.0.0 --port 8918`
+| 套餐 | 月生成额度 | 存储 | 数字人 | 成员 | 默认价 |
+|---|---:|---:|---:|---:|---:|
+| 体验版 | 30 分钟 | 2 GB | 1 | 1 | ¥0 |
+| 专业版 | 600 分钟 | 50 GB | 5 | 3 | ¥199 |
+| 企业版 | 3000 分钟 | 500 GB | 30 | 20 | ¥699 |
 
-### 3.2 多租户任务模型
+已实现：
 
-- `app/saas/domain.py`
-- 每个任务带 `tenant_id`、`user_id`
-- 状态：`queued -> running -> succeeded / failed / canceled`
-- API 查询会校验 tenant/user，避免跨租户读取任务
+- Subscription
+- 剩余秒数
+- 任务提交预留额度
+- 失败 / 取消自动退款
+- Usage Ledger
+- 人工额度调整
+- Payment Order
+- 手工订单确认
+- Development Mock Payment
+- 微信 / 支付宝 provider 位已预留
 
-目前开发阶段用请求头模拟身份：
+微信支付 / 支付宝真实收款需要商户号、证书、回调域名等外部凭据，因此代码中不会伪造真实支付凭据。拿到商户配置后只需接 provider adapter，不影响 SaaS 核心模型。
+
+### 运营后台
+
+- 平台用户数
+- 工作区数量
+- 排队 / 运行 / 失败任务
+- 待支付订单
+- 用户启停
+- 工作区套餐和剩余额度
+- 人工增减分钟数
+- 手工订单确认收款
+- Audit Log
+
+### Web SaaS 界面
+
+`/` 是独立 SaaS 工作台，不再复用 Mac 单机页面。
+
+包含：
+
+- 登录 / 注册
+- 总览
+- 课程
+- 数字人 / 克隆音色
+- 素材中心
+- 生成任务
+- 套餐 / 用量 / 订单
+- 工作区成员设置
+- 超级管理员运营页
+
+## 2. 云端架构
 
 ```text
-X-Tenant-ID: demo-company
-X-User-ID: dan
+Browser
+   |
+   v
+FastAPI SaaS API  (CPU 常驻)
+   |
+   +---- PostgreSQL
+   |       users / tenants / membership
+   |       assets / avatars / voices / courses
+   |       jobs / subscriptions / usage / orders / audit
+   |
+   +---- Redis
+   |       render queue / shared status / rate-limit
+   |
+   +---- Object Storage
+   |       PPT / image / video / audio / output
+   |
+   v
+Render Queue
+   |
+   +---- Mock Worker        无 GPU 联调
+   +---- MLX Worker         Mac 开发 / 回归
+   +---- CUDA Worker        Linux NVIDIA 生产
+   `---- Premium Worker     LongCat 等后续精品引擎
 ```
 
-生产环境必须替换为 JWT / Session 鉴权后的可信 claims，不能相信客户端任意提交的租户头。
-
-### 3.3 Redis 队列
-
-- `app/saas/queue.py`
-- 本地开发支持 `InMemoryJobQueue`
-- 云端支持 `RedisJobQueue`
-- API 与 GPU Worker 可以部署在不同机器
-
-### 3.4 对象存储抽象
-
-- `app/saas/storage.py`
-- 本地开发：Local filesystem
-- 云端：S3-compatible API
-- 可对接 AWS S3、MinIO，以及提供 S3 兼容接口的 OSS/COS 网关方案
-
-### 3.5 Worker 契约
-
-- `app/saas/worker.py`
-- Worker 从 Redis 取任务、更新状态、执行渲染、上传结果
-- 已保留 `LocalMLXMuseTalkHandler`，方便 Mac 上联调整套 SaaS 控制面
-- Linux GPU 生产 Worker 使用同一 `RenderHandler` 契约实现 `MuseTalk CUDA`
-
-### 3.6 本地云化基础设施
-
-- `Dockerfile.saas-api`
-- `docker-compose.saas.yml`
-- PostgreSQL 16
-- Redis 7，开启 AOF
-- CPU API 容器
-
-复制环境变量模板：
+## 3. 本机无 GPU 启动完整 SaaS
 
 ```bash
 cp .env.saas.example .env.saas
 ```
 
-然后：
+开发测试时 `.env.saas` 使用：
+
+```text
+WORKER_BACKEND=redis
+SAAS_RENDERER=mock
+```
+
+启动 API + PostgreSQL + Redis：
 
 ```bash
 docker compose -f docker-compose.saas.yml up --build
 ```
 
-## 4. API 第一版
+如果希望连 Mock Worker 一起启动：
 
-健康检查：
-
-```http
-GET /api/saas/health
+```bash
+docker compose -f docker-compose.saas.yml --profile mock-worker up --build
 ```
 
-提交任务：
-
-```http
-POST /api/saas/jobs
-X-Tenant-ID: demo-company
-X-User-ID: dan
-Content-Type: application/json
-
-{
-  "engine": "musetalk",
-  "payload": {
-    "video": "/path/to/master.mp4",
-    "audio": "/path/to/voice.wav"
-  }
-}
-```
-
-查询任务：
-
-```http
-GET /api/saas/jobs/{job_id}
-X-Tenant-ID: demo-company
-X-User-ID: dan
-```
-
-当前 payload 仍允许本地路径，是为了先验证控制面与 Worker；云端正式版会改成对象存储 URI / asset_id，禁止客户端向 Worker 注入任意服务器路径。
-
-## 5. 接下来必须完成的事项
-
-### Phase A：SaaS 控制面
-
-- PostgreSQL ORM 与 Alembic migration
-- User / Tenant / Membership
-- Asset / Avatar / VoiceProfile
-- RenderJob 持久化
-- JWT 登录与权限
-- API rate limit
-- 套餐、分钟额度、用量流水
-
-### Phase B：Linux CUDA Worker
-
-官方 MuseTalk 1.5 原生支持 Linux/CUDA，并提供 normal 与 realtime inference。生产 Worker 目标不是照搬 MLX，而是实现独立的 `MuseTalkCUDAHandler`：
+浏览器：
 
 ```text
-RenderHandler
-  |- LocalMLXMuseTalkHandler      Mac 开发
-  |- MuseTalkCUDAHandler          普通 SaaS
-  `- LongCatCUDAHandler           精品生成（后续）
+http://127.0.0.1:8918
 ```
 
-GPU Worker 镜像不安装 Web/UI，只包含：
-
-- CUDA / PyTorch
-- MuseTalk 1.5
-- FFmpeg
-- 下载/上传对象存储素材
-- Redis queue client
-- GPU benchmark / telemetry
-
-### Phase C：素材云化
-
-现有本地路径：
+API 文档：
 
 ```text
-profiles/assets/
-workspace/
-outputs/
+http://127.0.0.1:8918/docs
 ```
 
-替换为：
+## 4. Mac 上运行真实 MLX Worker
+
+API / PostgreSQL / Redis 可以跑 Docker，Worker 直接在 Mac Host 跑：
+
+```bash
+export DATABASE_URL='postgresql+psycopg://digital_human:digital_human@127.0.0.1:5432/digital_human'
+export REDIS_URL='redis://127.0.0.1:6379/0'
+export WORKER_BACKEND=redis
+export SAAS_RENDERER=mlx-local
+python -m app.saas.worker
+```
+
+要求原本的 MuseTalk-MLX / CosyVoice 环境已经就绪。
+
+## 5. 国内 CUDA 临时机器
+
+仓库已经提供：
+
+```bash
+bash scripts/cloud/setup_musetalk_cuda.sh
+bash scripts/cloud/check_musetalk_cuda.sh
+```
+
+推荐先用 RTX 3090 24GB 做兼容性测试，再用 RTX 4090 24GB 做单位成本 benchmark。
+
+CUDA 真机验证与 SaaS 功能开发是解耦的：即使没有 NVIDIA 机器，注册、登录、素材、数字人、课程、任务、套餐、额度、后台、对象存储、Redis 队列都可以完整开发和验收。
+
+## 6. 数据库
+
+开发环境可以使用 SQLite；Docker / 生产使用 PostgreSQL。
+
+初始化：
+
+```bash
+python -m app.saas.bootstrap
+```
+
+Alembic：
+
+```bash
+alembic upgrade head
+```
+
+`app.saas.bootstrap` 也会确保初始表和默认套餐存在，因此新环境可以直接启动。
+
+## 7. API 主要资源
 
 ```text
-asset://tenant/avatar/...
-asset://tenant/voice/...
-asset://tenant/course/...
-asset://tenant/output/...
+POST /api/saas/auth/register
+POST /api/saas/auth/login
+GET  /api/saas/auth/me
+POST /api/saas/auth/switch-workspace/{tenant_id}
+
+GET/POST /api/saas/workspaces
+GET/POST /api/saas/workspaces/members
+
+GET/POST/DELETE /api/saas/assets
+GET/POST/DELETE /api/saas/voices
+GET/POST/DELETE /api/saas/avatars
+GET/POST/PATCH/DELETE /api/saas/courses
+POST /api/saas/courses/{id}/render
+GET/POST /api/saas/jobs
+
+GET  /api/saas/billing/plans
+GET  /api/saas/billing/subscription
+GET/POST /api/saas/billing/orders
+
+GET  /api/saas/admin/overview
+GET  /api/saas/admin/users
+GET  /api/saas/admin/tenants
+POST /api/saas/admin/credits
+GET  /api/saas/admin/orders
+POST /api/saas/admin/orders/{id}/mark-paid
+GET  /api/saas/admin/audit
 ```
 
-数据库只记录 asset metadata，文件本体放对象存储。
+## 8. 安全边界
 
-### Phase D：计费
+已经实现 / 强制：
 
-不按“任务数”计费，建议按可理解的业务单位：
+- JWT 登录身份
+- tenant membership 校验
+- 资源查询 tenant filter
+- 私有对象存储设计
+- S3 signed URL
+- 上传体积限制
+- 文件扩展名限制
+- Rate Limit
+- Security headers
+- Production JWT secret 校验
+- Production 禁止 SQLite
+- Production 强制 Redis Worker
+- 审计日志
 
-- 普通数字人生成分钟
-- 精品数字人生成分钟
-- 存储空间
-- 企业讲师数量
-- 并发优先级
+上线时仍必须由部署环境提供：
 
-底层同时记录 GPU seconds，方便计算毛利：
+- HTTPS / TLS
+- 域名
+- 强随机 `SAAS_JWT_SECRET`
+- PostgreSQL 密码 / Redis ACL
+- OSS/COS/S3 Access Key Secret
+- 备份策略
+- WAF / CDN（按业务需要）
 
-```text
-job_gpu_seconds
-job_video_seconds
-queue_wait_seconds
-render_factor = gpu_seconds / video_seconds
-```
+## 9. 分支策略
 
-最终可以得到：
+- `main`：当前 Mac 本地生产版
+- `feat/saas-cloud`：SaaS 产品开发 / 云端部署版
 
-```text
-每 1 分钟成片的 GPU 成本
-每个套餐的真实毛利
-何时从 Serverless GPU 切换为包月 GPU
-```
-
-## 6. 推荐的第一版生产部署
-
-```text
-1 x 2C4G/4C8G CPU API
-1 x Managed PostgreSQL 或小规格 PostgreSQL
-1 x Redis
-1 x OSS/COS/S3 bucket
-0..N x 按量 GPU Worker
-CDN
-```
-
-GPU 空闲时缩到 0；当 Redis 队列有任务时再拉起 Worker。等月 GPU 使用小时数稳定达到包月盈亏平衡点，再切常驻 GPU。
-
-## 7. 安全边界
-
-SaaS 版必须把人脸与声音素材视为敏感业务数据：
-
-- tenant 级对象存储前缀隔离
-- 私有 bucket + 临时签名 URL
-- 上传内容类型与大小限制
-- 任务 payload 禁止任意本地路径
-- Worker 只读取属于当前 tenant/job 的 asset
-- 原始人脸/声音设置可配置保留周期
-- 删除账号/讲师时清理关联素材
-- 管理员审计日志
-
-## 8. 分支策略
-
-`main`：继续保持当前可用的 Mac 本地版。
-
-`feat/saas-cloud`：云端 SaaS 改造开发线。
-
-在 Linux CUDA Worker、数据库 migration、鉴权和核心 API 稳定前，不建议直接合并 `main`。可以先通过 draft PR 持续审查差异。
+CUDA 真机 benchmark 完成、生产对象存储与支付商户凭据配置完成之前，不建议把 SaaS 云部署逻辑强行并回 Mac 本地运行路径。
