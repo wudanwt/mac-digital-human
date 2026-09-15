@@ -31,11 +31,13 @@ class SaaSSettings:
     )
     redis_url: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
     queue_name: str = os.getenv("SAAS_QUEUE_NAME", "avatar:render")
+    queue_stale_seconds: int = int(os.getenv("SAAS_QUEUE_STALE_SECONDS", "7200"))
 
     jwt_secret: str = os.getenv("SAAS_JWT_SECRET", "dev-change-me-before-production")
     jwt_algorithm: str = os.getenv("SAAS_JWT_ALGORITHM", "HS256")
     access_token_minutes: int = int(os.getenv("SAAS_ACCESS_TOKEN_MINUTES", "1440"))
     admin_emails: tuple[str, ...] = _env_list("SAAS_ADMIN_EMAILS")
+    allow_public_registration: bool = _env_bool("SAAS_ALLOW_PUBLIC_REGISTRATION", True)
 
     storage_backend: str = os.getenv("STORAGE_BACKEND", "local")
     storage_bucket: str = os.getenv("STORAGE_BUCKET", "digital-human")
@@ -56,6 +58,12 @@ class SaaSSettings:
 
     free_plan_minutes: int = int(os.getenv("SAAS_FREE_PLAN_MINUTES", "30"))
     default_render_estimate_seconds: int = int(os.getenv("SAAS_DEFAULT_RENDER_ESTIMATE_SECONDS", "60"))
+    max_free_workspaces_per_user: int = int(os.getenv("SAAS_MAX_FREE_WORKSPACES_PER_USER", "1"))
+
+    payment_providers: tuple[str, ...] = _env_list("SAAS_PAYMENT_PROVIDERS", "manual")
+
+    require_ai_label: bool = _env_bool("SAAS_REQUIRE_AI_LABEL", True)
+    ai_label_text: str = os.getenv("SAAS_AI_LABEL_TEXT", "AI生成")
 
     @property
     def is_production(self) -> bool:
@@ -64,12 +72,31 @@ class SaaSSettings:
     def validate_production(self) -> None:
         if not self.is_production:
             return
-        if self.jwt_secret == "dev-change-me-before-production" or len(self.jwt_secret) < 32:
-            raise RuntimeError("SAAS_JWT_SECRET must be a strong secret in production")
+        forbidden_secrets = {
+            "dev-change-me-before-production",
+            "replace-with-a-long-random-production-secret",
+            "ci-test-secret-not-for-production-1234567890",
+        }
+        if self.jwt_secret in forbidden_secrets or len(self.jwt_secret) < 32:
+            raise RuntimeError("SAAS_JWT_SECRET must be a unique random 32+ character secret in production")
         if self.database_url.startswith("sqlite"):
             raise RuntimeError("Production SaaS must use PostgreSQL")
         if self.worker_backend != "redis":
             raise RuntimeError("Production SaaS requires WORKER_BACKEND=redis")
+        if self.storage_backend.lower() == "local":
+            raise RuntimeError("Production SaaS requires private object storage instead of local disk")
+        if not self.trusted_hosts or self.trusted_hosts == ("*",):
+            raise RuntimeError("Production SaaS requires explicit SAAS_TRUSTED_HOSTS")
+        if any(origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1") for origin in self.cors_origins):
+            raise RuntimeError("Production SaaS must configure non-localhost SAAS_CORS_ORIGINS")
+        if not self.require_ai_label:
+            raise RuntimeError("Production SaaS requires AI-generated content labeling")
+        unsupported = set(self.payment_providers) - {"manual"}
+        if unsupported:
+            raise RuntimeError(
+                "Only manual payment is production-ready in this branch; "
+                f"disable unsupported providers: {sorted(unsupported)}"
+            )
 
 
 saas_settings = SaaSSettings()
