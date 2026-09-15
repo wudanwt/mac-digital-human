@@ -52,59 +52,31 @@ def _peak_tree_rss(proc: psutil.Process) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run an avatar render and record real-machine performance")
-    parser.add_argument("--engine", choices=["musetalk", "longcat"], default="longcat")
     parser.add_argument("--audio", type=Path, required=True)
-    parser.add_argument("--video", type=Path)
-    parser.add_argument("--image", type=Path)
-    parser.add_argument("--prompt", default=settings.longcat_default_prompt)
-    parser.add_argument("--variant", default=None)
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=432)
-    parser.add_argument("--num-frames", type=int, default=61)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--video", type=Path, required=True)
+    parser.add_argument("--variant", default="q8")
     parser.add_argument("--label", default="first-run")
     args = parser.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     bench_dir = settings.root / "benchmarks" / "local"
     bench_dir.mkdir(parents=True, exist_ok=True)
-    output = bench_dir / f"{stamp}-{args.engine}.mp4"
-    report_path = bench_dir / f"{stamp}-{args.engine}.json"
+    output = bench_dir / f"{stamp}-musetalk.mp4"
+    report_path = bench_dir / f"{stamp}-musetalk.json"
 
     cmd = [
         sys.executable,
         "-m",
         "app.cli",
-        "--engine",
-        args.engine,
         "--audio",
         str(args.audio),
+        "--video",
+        str(args.video),
+        "--variant",
+        args.variant,
         "--output",
         str(output),
     ]
-    if args.variant:
-        cmd += ["--variant", args.variant]
-    if args.engine == "longcat":
-        if args.image is None:
-            parser.error("--image is required for LongCat benchmark")
-        cmd += [
-            "--image",
-            str(args.image),
-            "--prompt",
-            args.prompt,
-            "--width",
-            str(args.width),
-            "--height",
-            str(args.height),
-            "--num-frames",
-            str(args.num_frames),
-            "--seed",
-            str(args.seed),
-        ]
-    else:
-        if args.video is None:
-            parser.error("--video is required for MuseTalk benchmark")
-        cmd += ["--video", str(args.video)]
 
     vm_before = psutil.virtual_memory()
     started = time.time()
@@ -124,10 +96,8 @@ def main() -> int:
     report = {
         "label": args.label,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "engine": args.engine,
-        "variant": args.variant or (
-            settings.default_longcat_variant if args.engine == "longcat" else settings.default_musetalk_variant
-        ),
+        "engine": "musetalk",
+        "variant": args.variant,
         "command": cmd,
         "exit_code": child.returncode,
         "elapsed_seconds": round(elapsed, 3),
@@ -147,12 +117,6 @@ def main() -> int:
             "number_processors": hardware.get("number_processors"),
             "physical_memory": hardware.get("physical_memory"),
         },
-        "longcat": {
-            "width": args.width if args.engine == "longcat" else None,
-            "height": args.height if args.engine == "longcat" else None,
-            "num_frames": args.num_frames if args.engine == "longcat" else None,
-            "seed": args.seed if args.engine == "longcat" else None,
-        },
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -162,3 +126,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

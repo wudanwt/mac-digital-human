@@ -6,24 +6,23 @@ from pathlib import Path
 from app.course import _frames_for_duration
 from app.main import catalog
 from app.presets import BUILTIN_PROMPTS, get_avatar_profile, get_prompt_preset
-from app.tts import TTSConfig
+from app.tts import CosyVoiceConfig
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_prompt_presets_are_longcat_safe():
+def test_prompt_presets_are_valid():
     ids = [item.id for item in BUILTIN_PROMPTS]
     assert len(ids) == len(set(ids))
     assert "energy_training_studio" in ids
     for item in BUILTIN_PROMPTS:
         assert item.height % 8 == 0
         assert item.width % 8 == 0
-        assert (item.num_frames - 1) % 4 == 0
         assert item.prompt
 
 
-def test_longcat_frame_planner():
+def test_frame_planner():
     assert _frames_for_duration(1.0, 25) == 61
     assert _frames_for_duration(4.2, 25) == 105
     assert _frames_for_duration(20.0, 25, maximum=125) == 125
@@ -53,9 +52,8 @@ def test_course_example_manifest_is_valid_json():
     assert {item["role"] for item in payload["segments"]} >= {"hero", "body"}
 
 
-def test_tts_defaults_target_chinese_mlx_audio():
-    cfg = TTSConfig()
-    assert "Qwen3-TTS" in cfg.model
-    assert cfg.language == "Chinese"
-    assert cfg.voice
+def test_tts_defaults_cosyvoice():
+    cfg = CosyVoiceConfig()
+    assert cfg.voice == "default"
+    assert cfg.speed == 1.0
     assert get_prompt_preset("power_market_lab") is not None

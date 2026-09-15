@@ -6,7 +6,7 @@ import importlib
 import json
 import platform
 
-from app.engines import LongCatMLXEngine, MuseTalkMLXEngine
+from app.engines import MuseTalkMLXEngine
 
 
 def show_imports() -> None:
@@ -19,7 +19,6 @@ def show_imports() -> None:
         "cv2",
         "transformers",
         "librosa",
-        "imageio",
     ]:
         try:
             mod = importlib.import_module(name)
@@ -31,21 +30,14 @@ def show_imports() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=["all", "musetalk", "longcat"], default="all")
+    parser.add_argument("--engine", choices=["all", "musetalk"], default="musetalk")
     parser.add_argument("--variant", choices=["q4", "q8", "fp16"], default="q8")
-    parser.add_argument(
-        "--longcat-variant",
-        choices=["q4-merged", "q8-merged", "merged"],
-        default="q4-merged",
-    )
     args = parser.parse_args()
 
     show_imports()
-    statuses: dict[str, dict] = {}
-    if args.engine in {"all", "musetalk"}:
-        statuses["musetalk"] = MuseTalkMLXEngine().readiness(args.variant)
-    if args.engine in {"all", "longcat"}:
-        statuses["longcat"] = LongCatMLXEngine().readiness(args.longcat_variant)
+    statuses: dict[str, dict] = {
+        "musetalk": MuseTalkMLXEngine().readiness(args.variant)
+    }
 
     print(json.dumps(statuses, ensure_ascii=False, indent=2))
     return 0 if all(status["ready"] for status in statuses.values()) else 2
@@ -53,3 +45,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -6,10 +6,9 @@
   "prompt_preset": "energy_training_studio",
   "prompt": "",
   "tts": {
-    "provider": "audio8",
-    "voice": "default",
-    "threads": 5,
-    "ref_audio": "",
-    "ref_text": ""
+    "provider": "cosyvoice2",
+    "voice": "example",
+    "ref_audio": "./samples/reference.wav",
+    "ref_text": "参考音频对应的朗读台词内容"
   }
 }

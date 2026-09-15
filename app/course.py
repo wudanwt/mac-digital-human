@@ -11,7 +11,7 @@ from typing import Any
 
 from .composer import CourseComposer, media_duration
 from .config import settings
-from .engines import LongCatMLXEngine, MuseTalkMLXEngine
+from .engines import MuseTalkMLXEngine
 from .presets import get_avatar_profile, get_prompt_preset
 from .tts import create_tts, infer_provider
 
@@ -78,7 +78,6 @@ class CoursePipeline:
 
     def __init__(self) -> None:
         self.musetalk = MuseTalkMLXEngine()
-        self.longcat = LongCatMLXEngine()
         self.composer = CourseComposer()
 
     def build(self, manifest_path: Path, output: Path | None = None) -> CourseBuildResult:
@@ -163,66 +162,25 @@ class CoursePipeline:
 
         reports: list[SegmentReport] = []
         clips: list[Path] = []
-        longcat_max_frames = int(manifest.get("longcat_max_frames", 125))
-        longcat_fps = settings.longcat_fps
-        longcat_max_seconds = longcat_max_frames / longcat_fps
-
         for segment in prepared:
             seg_started = time.time()
             requested = segment["requested_engine"]
             role = segment["role"]
-            if requested not in {"auto", "musetalk", "longcat"}:
-                raise CourseBuildError(f"segment {segment['id']}: unsupported engine {requested}")
 
-            resolved = requested
+            resolved = "musetalk"
             fallback_reason: str | None = None
-            if requested == "auto":
-                resolved = "longcat" if role in {"hero", "intro", "section"} else "musetalk"
-
-            if resolved == "longcat" and segment["audio_seconds"] > longcat_max_seconds:
-                if requested == "longcat":
-                    raise CourseBuildError(
-                        f"segment {segment['id']} audio is {segment['audio_seconds']:.1f}s; "
-                        f"LongCat limit is about {longcat_max_seconds:.1f}s at {longcat_max_frames} frames"
-                    )
-                resolved = "musetalk"
-                fallback_reason = (
-                    f"LongCat clip would exceed {longcat_max_frames} frames; "
-                    "auto-fell back to MuseTalk"
-                )
+            if requested == "longcat":
+                fallback_reason = "LongCat已退役，自动迁移至极速母版口播 MuseTalk-MLX"
 
             target = clip_dir / f"{segment['index']:03d}-{_slug(segment['id'])}.mp4"
-            if resolved == "longcat":
-                if reference_image is None or not reference_image.exists():
-                    raise CourseBuildError("LongCat segment requires a profile image or assets.reference_image")
-                preset = get_prompt_preset(segment["prompt_preset"])
-                prompt = str(segment["prompt"] or (preset.prompt if preset else settings.longcat_default_prompt))
-                frames = _frames_for_duration(
-                    segment["audio_seconds"],
-                    longcat_fps,
-                    minimum=61,
-                    maximum=longcat_max_frames,
-                )
-                result = self.longcat.render(
-                    reference_image,
-                    segment["audio"],
-                    prompt=prompt,
-                    variant=settings.default_longcat_variant,
-                    height=preset.height if preset else settings.longcat_height,
-                    width=preset.width if preset else settings.longcat_width,
-                    num_frames=frames,
-                    seed=segment["seed"],
-                    output=target,
-                )
-            else:
-                if master_video is None or not master_video.exists():
-                    raise CourseBuildError("MuseTalk segment requires a profile master_video or assets.master_video")
-                result = self.musetalk.render(
-                    master_video,
-                    segment["audio"],
-                    variant=settings.default_musetalk_variant,
-                    output=target,
-                )
+            if master_video is None or not master_video.exists():
+                raise CourseBuildError("课程段落生成需要讲师母版视频 master_video")
+            result = self.musetalk.render(
+                master_video,
+                segment["audio"],
+                variant=settings.default_musetalk_variant,
+                output=target,
+            )
 
             clips.append(result.output)
             reports.append(

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .engines import LongCatMLXEngine, MuseTalkMLXEngine
+from .engines import MuseTalkMLXEngine
 
 
 @dataclass
@@ -22,17 +22,11 @@ class Job:
 
 
 class JobManager:
-    """Serialize heavy generation jobs on a single Apple Silicon machine.
-
-    MuseTalk's upstream pipeline uses shared temporary paths, while LongCat can
-    consume most of a 48 GB unified-memory Mac. A single queue is therefore the
-    safest default for both engines.
-    """
+    """Serialize heavy generation jobs on a single Apple Silicon machine."""
 
     def __init__(self) -> None:
         self.engines = {
             "musetalk": MuseTalkMLXEngine(),
-            "longcat": LongCatMLXEngine(),
         }
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()

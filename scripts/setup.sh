@@ -67,27 +67,13 @@ uv pip install --python "$PY" \
 echo
 "$PY" scripts/check_runtime.py --engine musetalk --variant "$VARIANT" || true
 
-if [[ "$WITH_LONGCAT" == "1" ]]; then
-  echo
-  echo "[optional] installing LongCat Avatar 1.5 MLX"
-  LONGCAT_VARIANT="${LONGCAT_VARIANT:-q4-merged}" bash scripts/setup_longcat.sh
-else
-  echo
-  echo "如需高质量 LongCat 引擎：bash scripts/setup_longcat.sh"
-fi
-
-if [[ "$WITH_TTS" == "1" ]]; then
-  echo
-  echo "[optional] installing production TTS (Audio8 ONNX by default)"
-  TTS_PROVIDER="${TTS_PROVIDER:-audio8}" bash scripts/setup_tts.sh
-else
-  echo "如需课程脚本自动 TTS：bash scripts/setup_tts.sh"
-fi
+echo
+echo "=== 准备 CosyVoice 2.0 语音克隆引擎 ==="
+bash scripts/setup_tts.sh
 
 echo
 echo "安装阶段完成。"
 echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
 echo "Web: bash scripts/run_web.sh"
-echo "课程生产: bash scripts/run_course.sh examples/course.example.json"
-echo "完整课程栈: WITH_LONGCAT=1 WITH_TTS=1 bash scripts/setup.sh"
-echo "同时安装 Audio8 + Qwen3: WITH_LONGCAT=1 WITH_TTS=1 TTS_PROVIDER=both bash scripts/setup.sh"
+echo "课程生产: bash scripts/run_lecture.sh"
+

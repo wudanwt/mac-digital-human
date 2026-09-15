@@ -3,7 +3,8 @@
 __pycache__/
 *.py[cod]
 .env
-vendor/
+/vendor/
+!digital-human-tts/vendor/
 models/
 workspace/
 outputs/
@@ -27,3 +28,16 @@ profiles/assets/
 !profiles/README.md
 
 benchmarks/local/
+
+# TTS 权重与个人人声隐私隔离
+digital-human-tts/models/
+digital-human-tts/voices/
+digital-human-tts/*.wav
+digital-human-tts/**/__pycache__/
+
+# 演示课件与临时媒体保护
+samples/*.pptx
+
+# 本地调试与临时脚本
+compose_*.py
+test_*.py
