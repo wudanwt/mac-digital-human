@@ -44,6 +44,8 @@ saas = [
   "alembic>=1.13",
   "psycopg[binary]>=3.2",
   "boto3>=1.35",
+  "oss2>=2.19",
+  "cos-python-sdk-v5>=1.9.35",
   "PyJWT>=2.9",
   "email-validator>=2.2",
 ]
@@ -56,6 +58,7 @@ dev = [
 mac-avatar = "app.cli:main"
 saas-worker = "app.saas.worker:run_forever"
 saas-bootstrap = "app.saas.bootstrap:main"
+saas-manage = "app.saas.manage:main"
 
 [tool.uv]
 package = true
