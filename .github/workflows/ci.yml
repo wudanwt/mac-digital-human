@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/saas-cloud]
   pull_request:
     branches: [main]
 
@@ -17,8 +17,13 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest
+          pip install -e '.[saas,dev]'
       - name: Compile
-        run: python -m compileall -q app scripts
+        run: python -m compileall -q app scripts migrations
       - name: Test
+        env:
+          SAAS_ENV: development
+          WORKER_BACKEND: local
+          STORAGE_BACKEND: local
+          SAAS_JWT_SECRET: ci-test-secret-not-for-production-1234567890
         run: pytest -q
