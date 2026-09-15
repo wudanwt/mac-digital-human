@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.saas.database import Base
 from app.saas.settings import saas_settings
-from app.saas import models  # noqa: F401
+from app.saas import compliance_models, models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", saas_settings.database_url)
