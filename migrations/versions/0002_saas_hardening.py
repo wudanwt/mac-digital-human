@@ -15,15 +15,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("render_jobs", sa.Column("output_asset_id", sa.String(length=32), nullable=True))
-    op.create_index("ix_render_jobs_output_asset_id", "render_jobs", ["output_asset_id"], unique=False)
-    op.create_foreign_key(
-        "fk_render_jobs_output_asset_id_assets",
-        "render_jobs",
-        "assets",
-        ["output_asset_id"],
-        ["id"],
-    )
+    with op.batch_alter_table("render_jobs") as batch:
+        batch.add_column(sa.Column("output_asset_id", sa.String(length=32), nullable=True))
+        batch.create_index("ix_render_jobs_output_asset_id", ["output_asset_id"], unique=False)
+        batch.create_foreign_key(
+            "fk_render_jobs_output_asset_id_assets",
+            "assets",
+            ["output_asset_id"],
+            ["id"],
+        )
 
     op.create_table(
         "consent_records",
@@ -55,6 +55,7 @@ def downgrade() -> None:
     op.drop_index("ix_consent_records_tenant_id", table_name="consent_records")
     op.drop_table("consent_records")
 
-    op.drop_constraint("fk_render_jobs_output_asset_id_assets", "render_jobs", type_="foreignkey")
-    op.drop_index("ix_render_jobs_output_asset_id", table_name="render_jobs")
-    op.drop_column("render_jobs", "output_asset_id")
+    with op.batch_alter_table("render_jobs") as batch:
+        batch.drop_constraint("fk_render_jobs_output_asset_id_assets", type_="foreignkey")
+        batch.drop_index("ix_render_jobs_output_asset_id")
+        batch.drop_column("output_asset_id")
