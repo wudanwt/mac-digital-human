@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from ..config import ROOT
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -11,40 +14,62 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_list(name: str, default: str = "") -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class SaaSSettings:
-    """Environment-driven settings for the cloud edition.
-
-    Defaults deliberately keep local development easy while production values
-    are supplied through environment variables or a secret manager.
-    """
-
     environment: str = os.getenv("SAAS_ENV", "development")
     api_prefix: str = os.getenv("SAAS_API_PREFIX", "/api/saas")
+    app_name: str = os.getenv("SAAS_APP_NAME", "Digital Human SaaS Studio")
 
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg://digital_human:digital_human@127.0.0.1:5432/digital_human",
+        f"sqlite:///{(ROOT / 'workspace' / 'saas.db').as_posix()}",
     )
     redis_url: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
     queue_name: str = os.getenv("SAAS_QUEUE_NAME", "avatar:render")
+
+    jwt_secret: str = os.getenv("SAAS_JWT_SECRET", "dev-change-me-before-production")
+    jwt_algorithm: str = os.getenv("SAAS_JWT_ALGORITHM", "HS256")
+    access_token_minutes: int = int(os.getenv("SAAS_ACCESS_TOKEN_MINUTES", "1440"))
+    admin_emails: tuple[str, ...] = _env_list("SAAS_ADMIN_EMAILS")
 
     storage_backend: str = os.getenv("STORAGE_BACKEND", "local")
     storage_bucket: str = os.getenv("STORAGE_BUCKET", "digital-human")
     storage_endpoint: str | None = os.getenv("STORAGE_ENDPOINT")
     storage_region: str | None = os.getenv("STORAGE_REGION")
     storage_public_base_url: str | None = os.getenv("STORAGE_PUBLIC_BASE_URL")
+    storage_local_root: Path = Path(os.getenv("STORAGE_LOCAL_ROOT", str(ROOT / "workspace" / "saas-assets")))
+    storage_signed_url_seconds: int = int(os.getenv("STORAGE_SIGNED_URL_SECONDS", "3600"))
 
     worker_backend: str = os.getenv("WORKER_BACKEND", "local")
     worker_poll_timeout_seconds: int = int(os.getenv("WORKER_POLL_TIMEOUT_SECONDS", "5"))
     allow_local_fallback: bool = _env_bool("SAAS_ALLOW_LOCAL_FALLBACK", True)
 
-    tenant_header: str = os.getenv("SAAS_TENANT_HEADER", "X-Tenant-ID")
-    user_header: str = os.getenv("SAAS_USER_HEADER", "X-User-ID")
+    max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
+    rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
+    cors_origins: tuple[str, ...] = _env_list("SAAS_CORS_ORIGINS", "http://localhost:8918,http://127.0.0.1:8918")
+    trusted_hosts: tuple[str, ...] = _env_list("SAAS_TRUSTED_HOSTS", "*")
+
+    free_plan_minutes: int = int(os.getenv("SAAS_FREE_PLAN_MINUTES", "30"))
+    default_render_estimate_seconds: int = int(os.getenv("SAAS_DEFAULT_RENDER_ESTIMATE_SECONDS", "60"))
 
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    def validate_production(self) -> None:
+        if not self.is_production:
+            return
+        if self.jwt_secret == "dev-change-me-before-production" or len(self.jwt_secret) < 32:
+            raise RuntimeError("SAAS_JWT_SECRET must be a strong secret in production")
+        if self.database_url.startswith("sqlite"):
+            raise RuntimeError("Production SaaS must use PostgreSQL")
+        if self.worker_backend != "redis":
+            raise RuntimeError("Production SaaS requires WORKER_BACKEND=redis")
 
 
 saas_settings = SaaSSettings()
