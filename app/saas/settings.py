@@ -80,6 +80,11 @@ class SaaSSettings:
         }
         if self.jwt_secret in forbidden_secrets or len(self.jwt_secret) < 32:
             raise RuntimeError("SAAS_JWT_SECRET must be a unique random 32+ character secret in production")
+        if self.allow_public_registration:
+            raise RuntimeError(
+                "Public production registration is disabled until email verification is configured; "
+                "set SAAS_ALLOW_PUBLIC_REGISTRATION=false and provision users with the admin CLI"
+            )
         if self.database_url.startswith("sqlite"):
             raise RuntimeError("Production SaaS must use PostgreSQL")
         if self.worker_backend != "redis":
