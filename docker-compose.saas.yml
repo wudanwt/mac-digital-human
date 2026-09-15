@@ -35,6 +35,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       WORKER_BACKEND: redis
       STORAGE_BACKEND: local
+      STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,6 +46,32 @@ services:
     volumes:
       - saas-outputs:/app/outputs
       - saas-workspace:/app/workspace
+    restart: unless-stopped
+
+  worker-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.saas
+    environment:
+      DATABASE_URL: postgresql+psycopg://digital_human:digital_human@postgres:5432/digital_human
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      SAAS_RENDERER: mock
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
+    command: ["python", "-m", "app.saas.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - saas-outputs:/app/outputs
+      - saas-workspace:/app/workspace
+    restart: unless-stopped
+    profiles: ["mock-worker"]
 
 volumes:
   saas-postgres:
