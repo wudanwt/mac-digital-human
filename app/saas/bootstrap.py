@@ -46,8 +46,10 @@ def initialize() -> None:
     saas_settings.validate_production()
     if not saas_settings.is_production:
         saas_settings.storage_local_root.mkdir(parents=True, exist_ok=True)
-        # Developer convenience only. Production schema changes must go through Alembic.
-        create_all()
+        # SQLite remains convenient for direct local Python development. PostgreSQL,
+        # including the Docker acceptance stack, is always managed by Alembic.
+        if saas_settings.database_url.startswith("sqlite"):
+            create_all()
     seed_plans()
     sync_superusers()
 
