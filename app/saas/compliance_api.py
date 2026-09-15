@@ -104,6 +104,27 @@ def revoke_consent(
             )
             if avatar:
                 avatar.status = "blocked"
+                # Remove synthesis source links so any subsequent real render is rejected safely.
+                avatar.master_video_asset_id = None
+                avatar.image_asset_id = None
+        elif item.subject_type == "voice":
+            voice = db.scalar(
+                select(VoiceProfile).where(VoiceProfile.id == item.subject_id, VoiceProfile.tenant_id == principal.tenant_id)
+            )
+            if voice:
+                voice.reference_asset_id = None
+                voice.transcript = ""
+                voice.provider = "revoked"
+                avatars = db.scalars(
+                    select(Avatar).where(Avatar.tenant_id == principal.tenant_id, Avatar.voice_profile_id == voice.id)
+                ).all()
+                for avatar in avatars:
+                    avatar.voice_profile_id = None
+                courses = db.scalars(
+                    select(Course).where(Course.tenant_id == principal.tenant_id, Course.voice_profile_id == voice.id)
+                ).all()
+                for course in courses:
+                    course.voice_profile_id = None
         audit(
             db,
             action="consent.revoke",
