@@ -8,6 +8,8 @@ from .assets_api import router as assets_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
 from .billing_api import router as billing_router
+from .compliance_api import admin_router as admin_compliance_router
+from .compliance_api import router as compliance_router
 from .database import engine
 from .settings import saas_settings
 from .storage import object_store
@@ -78,6 +80,7 @@ def capabilities() -> dict:
         "plans": True,
         "admin": True,
         "consent_records": True,
+        "content_reports": True,
         "ai_content_label": saas_settings.require_ai_label,
         "object_storage": ["s3", "minio", "oss", "cos"],
         "cuda_worker": "skipped-pending-hardware-validation",
@@ -95,6 +98,8 @@ for child in (
     job_router,
     dashboard_router,
     billing_router,
+    compliance_router,
     admin_router,
+    admin_compliance_router,
 ):
     router.include_router(child)
