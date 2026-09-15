@@ -20,6 +20,12 @@ jobs:
           pip install -e '.[saas,dev]'
       - name: Compile
         run: python -m compileall -q app scripts migrations
+      - name: Migration smoke test
+        env:
+          DATABASE_URL: sqlite:////tmp/saas-migration.db
+          SAAS_ENV: development
+          SAAS_JWT_SECRET: ci-test-secret-not-for-production-1234567890
+        run: alembic upgrade head
       - name: Test
         env:
           SAAS_ENV: development
@@ -27,3 +33,10 @@ jobs:
           STORAGE_BACKEND: local
           SAAS_JWT_SECRET: ci-test-secret-not-for-production-1234567890
         run: pytest -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SaaS API image
+        run: docker build -f Dockerfile.saas-api -t digital-human-saas:ci .
