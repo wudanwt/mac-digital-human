@@ -10,6 +10,7 @@ from .settings import saas_settings
 class ObjectStore(Protocol):
     def put_file(self, source: Path, key: str) -> str: ...
     def put_stream(self, stream: BinaryIO, key: str, content_type: str | None = None) -> str: ...
+    def materialize(self, key: str, destination: Path) -> Path: ...
     def delete(self, key: str) -> None: ...
     def signed_get_url(self, key: str) -> str | None: ...
     def local_path(self, key: str) -> Path | None: ...
@@ -40,6 +41,15 @@ class LocalObjectStore:
         with target.open("wb") as out:
             shutil.copyfileobj(stream, out, length=1024 * 1024)
         return f"local://{key}"
+
+    def materialize(self, key: str, destination: Path) -> Path:
+        source = self._target(key)
+        if not source.exists():
+            raise FileNotFoundError(key)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != destination.resolve():
+            shutil.copy2(source, destination)
+        return destination
 
     def delete(self, key: str) -> None:
         path = self._target(key)
@@ -80,6 +90,11 @@ class S3ObjectStore:
         kwargs = {"ExtraArgs": extra} if extra else {}
         self.client.upload_fileobj(stream, self.bucket, key, **kwargs)
         return f"s3://{self.bucket}/{key}"
+
+    def materialize(self, key: str, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        self.client.download_file(self.bucket, key, str(destination))
+        return destination
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
