@@ -10,15 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import (
-    Asset,
-    AuditLog,
-    Avatar,
-    Membership,
-    Plan,
-    Subscription,
-    UsageLedger,
-)
+from .models import Asset, AuditLog, Avatar, Membership, Plan, Subscription, UsageLedger
 from .settings import saas_settings
 
 
@@ -76,7 +68,6 @@ def _refresh_subscription(db: Session, sub: Subscription) -> Subscription:
         return sub
     if period_end > now:
         return sub
-
     plan = db.get(Plan, sub.plan_code)
     if sub.plan_code == "free" and plan is not None and sub.status == "active":
         sub.remaining_seconds = plan.monthly_minutes * 60
@@ -89,7 +80,10 @@ def _refresh_subscription(db: Session, sub: Subscription) -> Subscription:
 
 
 def active_subscription(db: Session, tenant_id: str, *, initial_seconds: int | None = None) -> Subscription:
-    sub = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
+    # FOR UPDATE is ignored by SQLite but serializes quota mutations in PostgreSQL.
+    sub = db.scalar(
+        select(Subscription).where(Subscription.tenant_id == tenant_id).with_for_update()
+    )
     if sub is None:
         plan = db.get(Plan, "free")
         seconds = (plan.monthly_minutes if plan else saas_settings.free_plan_minutes) * 60
@@ -122,9 +116,7 @@ def plan_for_tenant(db: Session, tenant_id: str) -> Plan:
 
 def enforce_storage_limit(db: Session, tenant_id: str, *, incoming_bytes: int = 0) -> None:
     plan = plan_for_tenant(db, tenant_id)
-    used = int(
-        db.scalar(select(func.coalesce(func.sum(Asset.size_bytes), 0)).where(Asset.tenant_id == tenant_id)) or 0
-    )
+    used = int(db.scalar(select(func.coalesce(func.sum(Asset.size_bytes), 0)).where(Asset.tenant_id == tenant_id)) or 0)
     limit = max(0, plan.storage_gb) * 1024**3
     if used + max(0, int(incoming_bytes)) > limit:
         raise HTTPException(status_code=402, detail=f"Storage quota exceeded ({plan.storage_gb} GB plan limit)")
@@ -167,9 +159,9 @@ def _ledger_exists(db: Session, *, job_id: str, kind: str) -> bool:
 
 def reserve_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id: str, seconds: int) -> None:
     seconds = max(1, int(seconds))
+    sub = active_subscription(db, tenant_id)
     if _ledger_exists(db, job_id=job_id, kind="render_reserved_seconds"):
         return
-    sub = active_subscription(db, tenant_id)
     if sub.status != "active":
         raise HTTPException(status_code=402, detail="Subscription is not active")
     if sub.remaining_seconds < seconds:
@@ -179,10 +171,10 @@ def reserve_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id:
 
 
 def refund_render_seconds(db: Session, *, tenant_id: str, user_id: str, job_id: str, seconds: int) -> None:
+    sub = active_subscription(db, tenant_id)
     if _ledger_exists(db, job_id=job_id, kind="render_refund_seconds"):
         return
     seconds = max(0, int(seconds))
-    sub = active_subscription(db, tenant_id)
     sub.remaining_seconds += seconds
     db.add(UsageLedger(tenant_id=tenant_id, user_id=user_id, job_id=job_id, kind="render_refund_seconds", units=float(seconds), details_json=json.dumps({"refund": True})))
 
@@ -196,12 +188,12 @@ def reconcile_render_seconds(
     reserved_seconds: int,
     actual_seconds: float | None,
 ) -> int:
+    sub = active_subscription(db, tenant_id)
     if _ledger_exists(db, job_id=job_id, kind="render_settlement_seconds"):
         return 0
     actual = max(1, int(math.ceil(float(actual_seconds or reserved_seconds or 1))))
     reserved = max(1, int(reserved_seconds))
     delta = actual - reserved
-    sub = active_subscription(db, tenant_id)
     if delta > 0:
         sub.remaining_seconds -= delta
     elif delta < 0:
