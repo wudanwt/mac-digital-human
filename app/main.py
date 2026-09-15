@@ -135,10 +135,20 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
 .wizard-panel.active{display:block}
 
 /* Visual Drag-and-Drop Canvas Studio */
-.canvas-studio-wrap{display:grid;grid-template-columns:1fr 340px;gap:20px;margin-top:16px}
-.canvas-main-col{display:flex;flex-direction:column;gap:14px}
-.canvas-toolbar{display:flex;align-items:center;justify-content:space-between;background:#0c0f17;border:1px solid #1f2737;border-radius:12px;padding:10px 16px}
-.canvas-viewport{position:relative;width:100%;aspect-ratio:16/9;background:#05070c;border-radius:14px;overflow:hidden;border:2px solid #2563eb66;box-shadow:0 16px 40px #0008;user-select:none}
+.canvas-studio-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;align-items:start;gap:16px;margin-top:16px}
+.canvas-main-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.canvas-toolbar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;min-width:0;background:#0c0f17;border:1px solid #1f2737;border-radius:12px;padding:10px 12px}
+.canvas-toolbar-nav{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.canvas-toolbar-action{width:auto;padding:6px 12px;font-size:12px;background:#1e3a8a;border-color:#3b82f6;color:#93c5fd;font-weight:600;white-space:nowrap}
+.canvas-viewport{position:relative;width:min(100%,853.333px);aspect-ratio:16/9;background:#05070c;border-radius:14px;overflow:hidden;border:2px solid #2563eb66;box-shadow:0 16px 40px #0008;user-select:none;margin:0 auto}
+.canvas-controls-col{position:sticky;top:88px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 112px);min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 4px 4px 0;scrollbar-width:thin;scrollbar-color:#334155 transparent}
+.canvas-controls-col::-webkit-scrollbar{width:6px}
+.canvas-controls-col::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}
+.canvas-controls-col .hud-item{padding:12px 14px}
+.canvas-controls-col label{margin-bottom:6px}
+.canvas-controls-actions{position:sticky;bottom:0;z-index:4;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:2px;padding:10px 0 2px;background:linear-gradient(180deg,transparent 0,#131722 22px,#131722 100%)}
+.canvas-controls-actions button{padding:9px 6px;font-size:12px;border-radius:8px}
+.slide-ribbon-panel{min-width:0;margin-top:2px;padding:10px 12px 4px;background:#0c0f1788;border:1px solid #1f2737;border-radius:12px}
 .canvas-bg-layer{position:absolute;inset:0;background-size:cover;background-position:center;transition:background-image .3s ease;pointer-events:none}
 .canvas-blur-bg{position:absolute;inset:-25px;background-size:cover;background-position:center;filter:blur(32px) brightness(0.65);transform:scale(1.15);pointer-events:none;transition:all .3s}
 
@@ -148,9 +158,9 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
 .drag-layer-box.active{z-index:15 !important}
 
 /* PPT Box Specific */
-.drag-ppt-box{border:2px solid #3b82f6aa;border-radius:8px;background:#000000;box-shadow:0 8px 24px #000c;z-index:5}
-.drag-ppt-box.active{border-color:#38bdf8;box-shadow:0 0 0 2px #38bdf8, 0 12px 36px #000e}
-.drag-ppt-box.fullscreen{border-style:dashed;border-color:#38bdf844;border-radius:0}
+.drag-ppt-box{border:2px solid #3b82f6aa;border-radius:10px;background:#000000;box-shadow:0 12px 36px rgba(0,0,0,0.8), 0 0 16px #3b82f633;z-index:5}
+.drag-ppt-box.active{border-color:#38bdf8;box-shadow:0 0 0 2px #38bdf8, 0 16px 44px #000e}
+.drag-ppt-box.fullscreen{border-style:dashed;border-color:#38bdf844;border-radius:0;box-shadow:none}
 .ppt-inner-img{width:100%;height:100%;background-size:contain;background-repeat:no-repeat;background-position:center;pointer-events:none}
 
 /* Avatar Box Specific */
@@ -169,7 +179,7 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
 
 .resize-handle{position:absolute;right:0;bottom:0;width:22px;height:22px;background:#38bdf8;cursor:nwse-resize;border-top-left-radius:6px;border-bottom-right-radius:6px;box-shadow:0 0 8px #38bdf8;z-index:25;display:flex;align-items:center;justify-content:center;font-size:12px;color:#000;font-weight:900}
 .canvas-sub-preview{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);max-width:85%;background:#090d16d0;border:1px solid #334155aa;color:#fff;padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 4px 14px #0009;z-index:30}
-.canvas-hud-coord{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#94a3b8}
+.canvas-hud-coord{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#94a3b8}
 
 /* Layer Switch Tabs */
 .layer-selector-bar{display:flex;gap:6px;background:#090d16;padding:4px;border-radius:8px;border:1px solid #1e2638;margin-bottom:12px}
@@ -177,16 +187,16 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
 .layer-tab-btn.active{background:#1e3a8a;color:#93c5fd;box-shadow:0 2px 8px #1e3a8a88}
 
 /* Slide Thumbnail Ribbon */
-.slide-ribbon{display:flex;gap:10px;overflow-x:auto;padding:8px 0}
-.ribbon-item{min-width:130px;aspect-ratio:16/9;border-radius:8px;overflow:hidden;border:2px solid #1e293b;cursor:pointer;position:relative;background:#090b10;flex-shrink:0;transition:all .2s}
+.slide-ribbon{display:flex;align-items:flex-start;gap:10px;width:100%;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:8px 2px 12px;box-sizing:border-box}
+.ribbon-item{flex:0 0 130px;width:130px;height:73.125px;border-radius:8px;overflow:hidden;border:2px solid #1e293b;box-sizing:border-box;cursor:pointer;position:relative;background:#090b10;transition:all .2s}
 .ribbon-item.active{border-color:#38bdf8;box-shadow:0 0 12px #38bdf866;transform:scale(1.03)}
-.ribbon-thumb{width:100%;height:100%;object-fit:cover}
+.ribbon-thumb{display:block;width:100%;height:100%;object-fit:cover}
 .ribbon-badge{position:absolute;bottom:4px;left:4px;background:#0f172acc;padding:1px 5px;border-radius:4px;font-size:10px;color:#cbd5e1}
 
 .snap-btn-group{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .snap-btn{padding:8px 4px;font-size:12px;font-weight:600;background:#111622;border:1px solid #232c3f;border-radius:6px;color:#cbd5e1;cursor:pointer;text-align:center;transition:all .15s}
 .snap-btn:hover{background:#1e293b;color:#fff;border-color:#38bdf8}
-.action-footer{display:flex;align-items:center;justify-content:space-between;margin-top:24px;padding-top:18px;border-top:1px solid #1f2737}
+.action-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:18px;padding-top:16px;border-top:1px solid #1f2737}
 
 /* Profile Edit Modal */
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(4,7,13,0.82);backdrop-filter:blur(8px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -197,7 +207,8 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
 .modal-close-btn:hover{color:#fff;background:#1e293b}
 @keyframes modalFadeIn{from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:scale(1)}}
 
-@media(max-width:860px){.slide-card,.canvas-studio-wrap{grid-template-columns:1fr}.modes,.row{grid-template-columns:1fr}}
+@media(max-width:980px){.slide-card,.canvas-studio-wrap{grid-template-columns:1fr}.modes,.row{grid-template-columns:1fr}.canvas-controls-col{position:static;max-height:none;overflow:visible;padding-right:0}.canvas-toolbar{grid-template-columns:1fr auto}.canvas-hud-coord{grid-column:1/-1;grid-row:2;text-align:left}.canvas-controls-actions{position:static;background:none;padding-top:0}}
+@media(max-width:620px){.canvas-toolbar{grid-template-columns:1fr}.canvas-toolbar-action{width:100%}.canvas-hud-coord{grid-column:1;grid-row:auto}.action-footer{align-items:stretch;flex-direction:column}.action-footer>button,.action-footer>div{width:100%!important}.action-footer>div{display:grid!important;grid-template-columns:1fr}.action-footer button{width:100%!important}}
 </style>
 
 
@@ -320,13 +331,13 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
         <!-- Main Canvas Column -->
         <div class="canvas-main-col">
           <div class="canvas-toolbar">
-            <div style="display:flex;align-items:center;gap:10px">
+            <div class="canvas-toolbar-nav">
               <button type="button" onclick="prevSlideCanvas()" style="width:auto;padding:6px 12px;font-size:12px">◀ 上一页</button>
               <span id="canvasSlideIndicator" style="font-weight:700;font-size:14px;color:#38bdf8">第 1 / 1 页</span>
               <button type="button" onclick="nextSlideCanvas()" style="width:auto;padding:6px 12px;font-size:12px">下一页 ▶</button>
             </div>
             <div class="canvas-hud-coord" id="canvasCoordHud">选中: 👤 主讲数字人 | X:68.0% Y:40.0% | 尺寸: 28.0% × 56.0%</div>
-            <button type="button" onclick="applyLayoutToAllSlides()" style="width:auto;padding:6px 14px;font-size:12px;background:#1e3a8a;border-color:#3b82f6;color:#93c5fd;font-weight:600">✨ 应用当前版面到所有页面</button>
+            <button type="button" class="canvas-toolbar-action" onclick="applyLayoutToAllSlides()">✨ 应用到全部页面</button>
           </div>
 
           <!-- 16:9 Interactive Viewport -->
@@ -337,7 +348,7 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
             <div class="canvas-blur-bg" id="canvasBlurBg"></div>
 
             <!-- Draggable PPT Box Layer -->
-            <div class="drag-layer-box drag-ppt-box fullscreen" id="dragPptBox" style="left:0%;top:0%;width:100%;height:100%;" onclick="selectActiveCanvasLayer('ppt', event)">
+            <div class="drag-layer-box drag-ppt-box" id="dragPptBox" style="left:4%;top:10%;width:65%;height:76%;" onclick="selectActiveCanvasLayer('ppt', event)">
               <div class="drag-layer-tag ppt">
                 <span>📑</span>
                 <span>PPT 课件视窗 (按住拖拽)</span>
@@ -347,7 +358,7 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
             </div>
 
             <!-- Draggable Avatar Box Layer -->
-            <div class="drag-layer-box drag-avatar-box active" id="dragAvatarBox" style="left:68%;top:40%;width:28%;height:56%;" onclick="selectActiveCanvasLayer('avatar', event)">
+            <div class="drag-layer-box drag-avatar-box active" id="dragAvatarBox" style="left:71%;top:26%;width:25%;height:70%;" onclick="selectActiveCanvasLayer('avatar', event)">
               <div class="drag-layer-tag avatar">
                 <span>👤</span>
                 <span id="dragAvatarLabel">主讲数字人 (按住拖拽)</span>
@@ -361,14 +372,14 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
           </div>
 
           <!-- Slide Ribbon Carousel -->
-          <div style="margin-top:6px">
-            <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">点击快速跳转幻灯片:</div>
+          <div class="slide-ribbon-panel">
+            <div style="font-size:12px;color:#94a3b8;margin-bottom:2px">快速跳转幻灯片</div>
             <div class="slide-ribbon" id="slideRibbon"></div>
           </div>
         </div>
 
         <!-- Sidebar Controls Column -->
-        <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="canvas-controls-col">
           <!-- Presentation Layout Mode Selector -->
           <div class="hud-item">
             <label style="margin-bottom:8px">本页画面呈现模式</label>
@@ -395,10 +406,11 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
           <div class="hud-item" id="pptSnapPanel" style="display:none">
             <label style="margin-bottom:8px">PPT 课件快捷吸附构图</label>
             <div class="snap-btn-group">
-              <div class="snap-btn" style="grid-column:span 3" onclick="snapPpt('fullscreen')">🖥️ 全屏居中铺满 (100%)</div>
-              <div class="snap-btn" onclick="snapPpt('left_main')">📑 经典左主屏 (66%)</div>
-              <div class="snap-btn" onclick="snapPpt('right_main')">📑 经典右主屏 (66%)</div>
-              <div class="snap-btn" onclick="snapPpt('center_box')">🎯 居中小窗 (80%)</div>
+              <div class="snap-btn" style="grid-column:span 3;background:#1e3a8a;border-color:#3b82f6;color:#93c5fd;font-weight:700" onclick="snapPpt('studio_gold')">🌟 经典演播室黄金构图 (推荐 65%)</div>
+              <div class="snap-btn" onclick="snapPpt('fullscreen')">🖥️ 全屏居中铺满 (100%)</div>
+              <div class="snap-btn" onclick="snapPpt('left_main')">📑 经典左主屏 (65%)</div>
+              <div class="snap-btn" onclick="snapPpt('right_main')">📑 经典右主屏 (65%)</div>
+              <div class="snap-btn" onclick="snapPpt('center_box')">🎯 居中展台 (76%)</div>
             </div>
           </div>
 
@@ -443,10 +455,9 @@ video{max-width:100%;border-radius:10px;box-shadow:0 8px 32px #0008}
             <div class="tip" id="bgModeTip">实时在画布模拟真实成片虚拟演播厅底板效果。</div>
           </div>
 
-          <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
-            <button type="button" class="primary-btn" onclick="saveCurrentCanvasLayout()" style="width:100%;background:#0284c7;padding:10px;font-size:13px;border-radius:8px">💾 保存当前页排版方案</button>
-            <button type="button" class="secondary-btn" onclick="applyLayoutToAllSlides()" style="width:100%;padding:10px;font-size:13px;border-radius:8px">📌 保存并同步到所有幻灯片</button>
-            <div class="tip" style="text-align:center">支持单页独立排版或全局同步，刷新页面可自动恢复。</div>
+          <div class="canvas-controls-actions">
+            <button type="button" class="primary-btn" onclick="saveCurrentCanvasLayout()" style="background:#0284c7">💾 保存本页</button>
+            <button type="button" class="secondary-btn" onclick="applyLayoutToAllSlides()">📌 同步全部</button>
           </div>
         </div>
       </div>
@@ -1497,10 +1508,10 @@ async function loadLectureSessionById(sessionId, targetStep = 2) {
     data.slides.forEach(s => {
       slidesLayoutMap[s.index] = {
         layout: 'pip',
-        ppt_box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 },
-        pip_box: { x: 0.74, y: 0.35, w: 0.22, h: 0.68 },
-        custom_bg: null,
-        bg_blur: true,
+        ppt_box: { x: 0.04, y: 0.10, w: 0.65, h: 0.76 },
+        pip_box: { x: 0.71, y: 0.26, w: 0.25, h: 0.70 },
+        custom_bg: 'studio_tech_blue.jpg',
+        bg_blur: false,
       };
     });
     // 自动恢复持久化保存的排版配置（优先从服务器读取，其次从本地缓存读取）
@@ -1521,6 +1532,16 @@ async function loadLectureSessionById(sessionId, targetStep = 2) {
         }
       } catch(e) {}
     }
+
+    // 智能升级旧版满屏遗留配置：若 PPT 仍为满屏(1.0x1.0)且未配置背景，自动升级为演播厅黄金比例
+    Object.values(slidesLayoutMap).forEach(cfg => {
+      if (cfg.layout === 'pip' && (!cfg.ppt_box || (cfg.ppt_box.w >= 0.98 && cfg.ppt_box.h >= 0.98)) && (!cfg.custom_bg || cfg.custom_bg === 'blur')) {
+        cfg.ppt_box = { x: 0.04, y: 0.10, w: 0.65, h: 0.76 };
+        cfg.pip_box = { x: 0.71, y: 0.26, w: 0.25, h: 0.70 };
+        cfg.custom_bg = 'studio_tech_blue.jpg';
+        cfg.bg_blur = false;
+      }
+    });
 
     renderSlidesWorkshop(data);
     renderSlideRibbon(data);
@@ -1556,10 +1577,10 @@ async function handleParsePPT() {
     data.slides.forEach(s => {
       slidesLayoutMap[s.index] = {
         layout: 'pip',
-        ppt_box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 },
-        pip_box: { x: 0.68, y: 0.40, w: 0.28, h: 0.56 },
-        custom_bg: null,
-        bg_blur: true,
+        ppt_box: { x: 0.04, y: 0.10, w: 0.65, h: 0.76 },
+        pip_box: { x: 0.71, y: 0.26, w: 0.25, h: 0.70 },
+        custom_bg: 'studio_tech_blue.jpg',
+        bg_blur: false,
       };
     });
     if (data.slides_layout && Object.keys(data.slides_layout).length > 0) {
@@ -1567,6 +1588,14 @@ async function handleParsePPT() {
         slidesLayoutMap[parseInt(k, 10)] = JSON.parse(JSON.stringify(v));
       }
     }
+    Object.values(slidesLayoutMap).forEach(cfg => {
+      if (cfg.layout === 'pip' && (!cfg.ppt_box || (cfg.ppt_box.w >= 0.98 && cfg.ppt_box.h >= 0.98)) && (!cfg.custom_bg || cfg.custom_bg === 'blur')) {
+        cfg.ppt_box = { x: 0.04, y: 0.10, w: 0.65, h: 0.76 };
+        cfg.pip_box = { x: 0.71, y: 0.26, w: 0.25, h: 0.70 };
+        cfg.custom_bg = 'studio_tech_blue.jpg';
+        cfg.bg_blur = false;
+      }
+    });
 
 
     renderSlidesWorkshop(data);
@@ -1883,50 +1912,18 @@ function snapPpt(preset) {
 
   if (preset === 'fullscreen') {
     cfg.ppt_box = { x: 0.0, y: 0.0, w: 1.0, h: 1.0 };
-  } else if (preset === 'left_main') {
-    let w = 0.65;
-    let h = w * (16 / 9) / pptRatio;
-    if (h > 0.94) {
-      h = 0.94;
-      w = h * pptRatio / (16 / 9);
+  } else if (preset === 'studio_gold' || preset === 'left_main') {
+    cfg.ppt_box = { x: 0.04, y: 0.10, w: 0.65, h: 0.76 };
+    if (!cfg.custom_bg || cfg.custom_bg === 'blur' || cfg.custom_bg === 'black') {
+      cfg.custom_bg = 'studio_tech_blue.jpg';
+      cfg.bg_blur = false;
     }
-    let y = Math.max(0.03, (1.0 - h) / 2);
-    cfg.ppt_box = {
-      x: 0.03,
-      y: Math.round(y * 1000) / 1000,
-      w: Math.round(w * 1000) / 1000,
-      h: Math.round(h * 1000) / 1000
-    };
+    cfg.pip_box = { x: 0.71, y: 0.26, w: 0.25, h: 0.70 };
   } else if (preset === 'right_main') {
-    let w = 0.65;
-    let h = w * (16 / 9) / pptRatio;
-    if (h > 0.94) {
-      h = 0.94;
-      w = h * pptRatio / (16 / 9);
-    }
-    let y = Math.max(0.03, (1.0 - h) / 2);
-    let x = Math.max(0.03, 1.0 - w - 0.03);
-    cfg.ppt_box = {
-      x: Math.round(x * 1000) / 1000,
-      y: Math.round(y * 1000) / 1000,
-      w: Math.round(w * 1000) / 1000,
-      h: Math.round(h * 1000) / 1000
-    };
+    cfg.ppt_box = { x: 0.31, y: 0.10, w: 0.65, h: 0.76 };
+    cfg.pip_box = { x: 0.04, y: 0.26, w: 0.25, h: 0.70 };
   } else if (preset === 'center_box') {
-    let w = 0.78;
-    let h = w * (16 / 9) / pptRatio;
-    if (h > 0.88) {
-      h = 0.88;
-      w = h * pptRatio / (16 / 9);
-    }
-    let x = (1.0 - w) / 2;
-    let y = (1.0 - h) / 2;
-    cfg.ppt_box = {
-      x: Math.round(x * 1000) / 1000,
-      y: Math.round(y * 1000) / 1000,
-      w: Math.round(w * 1000) / 1000,
-      h: Math.round(h * 1000) / 1000
-    };
+    cfg.ppt_box = { x: 0.12, y: 0.12, w: 0.76, h: 0.76 };
   }
   renderCanvasLayers(cfg);
   selectActiveCanvasLayer('ppt');
@@ -2017,14 +2014,20 @@ function initOrUpdateCanvas() {
   if (!slidesLayoutMap[slide.index]) {
     slidesLayoutMap[slide.index] = {
       layout: 'pip',
-      ppt_box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 },
-      pip_box: { x: 0.74, y: 0.35, w: 0.22, h: 0.68 },
-      custom_bg: null,
-      bg_blur: true,
+      ppt_box: { x: 0.04, y: 0.10, w: 0.65, h: 0.76 },
+      pip_box: { x: 0.71, y: 0.26, w: 0.25, h: 0.70 },
+      custom_bg: 'studio_tech_blue.jpg',
+      bg_blur: false,
     };
   }
   const cfg = slidesLayoutMap[slide.index];
   if (!cfg.layout) cfg.layout = 'pip';
+  if (cfg.layout === 'pip' && (!cfg.ppt_box || (cfg.ppt_box.w >= 0.98 && cfg.ppt_box.h >= 0.98)) && (!cfg.custom_bg || cfg.custom_bg === 'blur')) {
+    cfg.ppt_box = { x: 0.04, y: 0.10, w: 0.65, h: 0.76 };
+    cfg.pip_box = { x: 0.71, y: 0.26, w: 0.25, h: 0.70 };
+    cfg.custom_bg = 'studio_tech_blue.jpg';
+    cfg.bg_blur = false;
+  }
   const modeSel = document.getElementById('canvasLayoutModeSelect');
   if (modeSel) modeSel.value = cfg.layout;
 
@@ -2437,10 +2440,10 @@ async function handleProduceCourse() {
     const narrationText = document.getElementById(`narration-${s.index}`).value;
     const cfg = slidesLayoutMap[s.index] || {
       layout: 'pip',
-      ppt_box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 },
-      pip_box: { x: 0.74, y: 0.35, w: 0.22, h: 0.68 },
-      custom_bg: null,
-      bg_blur: true,
+      ppt_box: { x: 0.04, y: 0.10, w: 0.65, h: 0.76 },
+      pip_box: { x: 0.71, y: 0.26, w: 0.25, h: 0.70 },
+      custom_bg: 'studio_tech_blue.jpg',
+      bg_blur: false,
     };
     return {
       index: s.index,
@@ -3203,5 +3206,3 @@ def get_wudan2_demo_audio():
     if not audio.exists():
         raise HTTPException(404, "吴丹2克隆音频未找到")
     return FileResponse(audio, media_type="audio/wav")
-
-
