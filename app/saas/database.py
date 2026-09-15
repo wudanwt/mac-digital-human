@@ -30,7 +30,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def create_all() -> None:
-    # Import model metadata before create_all.
-    from . import models  # noqa: F401
+    # Developer convenience only; production uses Alembic.
+    from . import compliance_models, models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
