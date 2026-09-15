@@ -44,15 +44,17 @@ def sync_superusers() -> None:
 
 def initialize() -> None:
     saas_settings.validate_production()
-    saas_settings.storage_local_root.mkdir(parents=True, exist_ok=True)
-    create_all()
+    if not saas_settings.is_production:
+        saas_settings.storage_local_root.mkdir(parents=True, exist_ok=True)
+        # Developer convenience only. Production schema changes must go through Alembic.
+        create_all()
     seed_plans()
     sync_superusers()
 
 
 def main() -> None:
     initialize()
-    print("SaaS database initialized.")
+    print("SaaS runtime bootstrap completed.")
 
 
 if __name__ == "__main__":
