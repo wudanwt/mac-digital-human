@@ -13,6 +13,7 @@ dependencies = [
   "psutil>=6.0",
   "python-pptx>=1.0.2",
   "pymupdf>=1.24",
+  "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +57,7 @@ dev = [
 
 [project.scripts]
 mac-avatar = "app.cli:main"
-saas-worker = "app.saas.worker:run_forever"
+saas-worker = "app.saas.worker_entry:run_forever"
 saas-bootstrap = "app.saas.bootstrap:main"
 saas-manage = "app.saas.manage:main"
 
