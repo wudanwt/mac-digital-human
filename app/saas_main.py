@@ -19,6 +19,8 @@ from .saas.avatar_ui import javascript_response as avatar_javascript_response
 from .saas.bootstrap import initialize
 from .saas.course_studio_ui import css_response as course_studio_css_response
 from .saas.course_studio_ui import javascript_response as course_studio_javascript_response
+from .saas.course_studio_upgrade import css_response as course_studio_upgrade_css_response
+from .saas.course_studio_upgrade import javascript_response as course_studio_upgrade_javascript_response
 from .saas.interaction_patch import javascript_response as interaction_javascript_response
 from .saas.middleware import RateLimitMiddleware
 from .saas.polish_ui import javascript_response as polish_javascript_response
@@ -60,7 +62,9 @@ def _enhanced_dashboard() -> HTMLResponse:
     body = base.body.decode("utf-8")
     body = body.replace(
         "</head>",
-        '<link rel="stylesheet" href="/saas-theme.css"><link rel="stylesheet" href="/course-studio.css"></head>',
+        '<link rel="stylesheet" href="/saas-theme.css">'
+        '<link rel="stylesheet" href="/course-studio.css">'
+        '<link rel="stylesheet" href="/course-studio-upgrade.css"></head>',
     )
     body = body.replace(
         "</body>",
@@ -68,7 +72,8 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/product-ui.js"></script>'
         '<script src="/polish-ui.js"></script>'
         '<script src="/interaction-patch.js"></script>'
-        '<script src="/course-studio.js"></script></body>',
+        '<script src="/course-studio.js"></script>'
+        '<script src="/course-studio-upgrade.js"></script></body>',
     )
     return HTMLResponse(body)
 
@@ -81,6 +86,11 @@ def saas_theme():
 @app.get("/course-studio.css", include_in_schema=False)
 def course_studio_css():
     return course_studio_css_response()
+
+
+@app.get("/course-studio-upgrade.css", include_in_schema=False)
+def course_studio_upgrade_css():
+    return course_studio_upgrade_css_response()
 
 
 @app.get("/avatar-ui.js", include_in_schema=False)
@@ -106,6 +116,11 @@ def interaction_ui_script():
 @app.get("/course-studio.js", include_in_schema=False)
 def course_studio_script():
     return course_studio_javascript_response()
+
+
+@app.get("/course-studio-upgrade.js", include_in_schema=False)
+def course_studio_upgrade_script():
+    return course_studio_upgrade_javascript_response()
 
 
 @app.get("/", include_in_schema=False)
