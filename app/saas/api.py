@@ -11,6 +11,7 @@ from .billing_api import router as billing_router
 from .compliance_api import admin_router as admin_compliance_router
 from .compliance_api import router as compliance_router
 from .database import engine
+from .digital_human_api import router as digital_human_router
 from .settings import saas_settings
 from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
@@ -72,6 +73,9 @@ def capabilities() -> dict:
         "auth": True,
         "multi_tenant": True,
         "assets": True,
+        "digital_human_assets": True,
+        "digital_human_direct_upload": True,
+        "browser_voice_recording": True,
         "avatars": True,
         "voice_profiles": True,
         "courses": True,
@@ -92,6 +96,7 @@ for child in (
     auth_router,
     workspace_router,
     assets_router,
+    digital_human_router,
     voice_router,
     avatar_router,
     course_router,
