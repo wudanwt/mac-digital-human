@@ -15,6 +15,7 @@ from .compliance_api import router as compliance_router
 from .course_tools_api import router as course_tools_router
 from .database import engine
 from .digital_human_api import router as digital_human_router
+from .job_detail_api import router as job_detail_router
 from .settings import saas_settings
 from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
@@ -90,8 +91,11 @@ def capabilities() -> dict:
         "course_studio_background_upload": True,
         "course_studio_builtin_backgrounds": True,
         "render_queue": True,
+        "render_job_slide_detail": True,
         "engine_isolated_queues": True,
         "worker_heartbeat": True,
+        "resident_musetalk_runtime": True,
+        "tts_video_prefetch": True,
         "usage_quota": True,
         "plans": True,
         "admin": True,
@@ -116,6 +120,7 @@ for child in (
     course_tools_router,
     backgrounds_router,
     worker_status_router,
+    job_detail_router,
     job_router,
     dashboard_router,
     billing_router,
