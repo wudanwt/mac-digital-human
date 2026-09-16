@@ -5,6 +5,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,9 @@ class CosyVoiceTTS:
     name = "cosyvoice2"
     _shared_service = None
     _shared_bundle_dir = None
+    # CosyVoice's model/frontend objects are shared to keep the 0.5B model warm.
+    # Protect them from concurrent inference calls from future workers/prefetchers.
+    _inference_lock = threading.RLock()
 
     def __init__(self, config: CosyVoiceConfig | None = None) -> None:
         self.config = config or CosyVoiceConfig()
@@ -49,9 +53,14 @@ class CosyVoiceTTS:
         self._normalized_ref_audio: Path | None = None
 
     def _normalize_reference_audio(self, source: Path, target_dir: Path) -> Path:
-        """Convert browser/upload audio to a format CosyVoice can always decode."""
-        if source.suffix.lower() == ".wav":
-            return source
+        """Always standardize clone audio to the local pipeline's 24 kHz mono WAV contract.
+
+        The old local avatar workflow normalized *every* uploaded reference,
+        including WAV files.  SaaS previously skipped conversion when the file
+        already ended in ``.wav``; a 44.1/48 kHz stereo WAV could therefore take
+        a different path from the proven local workflow.
+        """
+        source = source.resolve()
         if (
             self._normalized_ref_source == source
             and self._normalized_ref_audio is not None
@@ -94,7 +103,9 @@ class CosyVoiceTTS:
 
     def _get_service(self):
         if CosyVoiceTTS._shared_service is not None and CosyVoiceTTS._shared_bundle_dir == str(self.bundle_dir):
-            return CosyVoiceTTS._shared_service
+            service = CosyVoiceTTS._shared_service
+            service.pause_seconds = self.config.pause_seconds
+            return service
 
         logger.info("Loading CosyVoice 2.0 0.5B model from: %s", self.bundle_dir)
         sys.path.insert(0, str(self.bundle_dir))
@@ -166,16 +177,32 @@ class CosyVoiceTTS:
                 ref_text = self._default_ref_text
 
         resolved_ref_audio = self._normalize_reference_audio(resolved_ref_audio, out_path.parent)
+        try:
+            info = sf.info(str(resolved_ref_audio))
+            prompt_seconds = float(info.frames) / float(info.samplerate) if info.samplerate else 0.0
+        except Exception as exc:
+            raise TTSError(f"Reference voice audio cannot be inspected: {exc}") from exc
+        if prompt_seconds < 1.0:
+            raise TTSError("Reference voice audio is too short; record at least 3-5 seconds of clear speech")
+        if prompt_seconds > 30.0:
+            raise TTSError("Reference voice audio is longer than 30 seconds; CosyVoice zero-shot supports at most 30 seconds")
+        if prompt_seconds > 15.0:
+            logger.warning(
+                "Long CosyVoice prompt (%.1fs). A clean 5-10s prompt with an exact transcript is usually more stable.",
+                prompt_seconds,
+            )
 
         service = self._get_service()
         try:
-            result = service.synthesize(
-                text=clean_text,
-                reference_audio=str(resolved_ref_audio),
-                reference_text=ref_text.strip(),
-                speed=speed,
-                instruct=instruct,
-            )
+            with CosyVoiceTTS._inference_lock:
+                service.pause_seconds = self.config.pause_seconds
+                result = service.synthesize(
+                    text=clean_text,
+                    reference_audio=str(resolved_ref_audio),
+                    reference_text=ref_text.strip(),
+                    speed=speed,
+                    instruct=instruct,
+                )
             sf.write(str(out_path), result.audio, result.sample_rate, subtype="PCM_16")
             return out_path
         except Exception as exc:
