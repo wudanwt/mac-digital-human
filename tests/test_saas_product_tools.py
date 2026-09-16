@@ -101,12 +101,16 @@ def test_ppt_outline_parser_for_course_studio() -> None:
 def test_theme_and_product_ui_assets_are_served() -> None:
     with TestClient(app) as client:
         css = client.get("/saas-theme.css")
-        js = client.get("/product-ui.js")
+        product_js = client.get("/product-ui.js")
+        polish_js = client.get("/polish-ui.js")
         page = client.get("/")
         assert css.status_code == 200
         assert "tech-hero" in css.text
-        assert js.status_code == 200
-        assert "COURSE STUDIO" in js.text
+        assert product_js.status_code == 200
+        assert "COURSE STUDIO" in product_js.text
+        assert polish_js.status_code == 200
+        assert "运营附加数据" in polish_js.text
         assert page.status_code == 200
         assert "/saas-theme.css" in page.text
         assert "/product-ui.js" in page.text
+        assert "/polish-ui.js" in page.text
