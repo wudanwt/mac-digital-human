@@ -64,7 +64,7 @@ services:
       SAAS_RENDERER: mock
       STORAGE_BACKEND: local
       STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
-    command: ["python", "-m", "app.saas.worker"]
+    command: ["python", "-m", "app.saas.worker_entry"]
     depends_on:
       postgres:
         condition: service_healthy
