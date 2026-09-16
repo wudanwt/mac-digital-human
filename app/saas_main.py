@@ -28,6 +28,7 @@ from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
 from .saas.theme_ui import css_response as theme_css_response
 from .saas.web import dashboard_html
+from .saas.worker_ui import javascript_response as worker_javascript_response
 
 
 @asynccontextmanager
@@ -73,7 +74,8 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/polish-ui.js"></script>'
         '<script src="/interaction-patch.js"></script>'
         '<script src="/course-studio.js"></script>'
-        '<script src="/course-studio-upgrade.js"></script></body>',
+        '<script src="/course-studio-upgrade.js"></script>'
+        '<script src="/worker-ui.js"></script></body>',
     )
     return HTMLResponse(body)
 
@@ -121,6 +123,11 @@ def course_studio_script():
 @app.get("/course-studio-upgrade.js", include_in_schema=False)
 def course_studio_upgrade_script():
     return course_studio_upgrade_javascript_response()
+
+
+@app.get("/worker-ui.js", include_in_schema=False)
+def worker_ui_script():
+    return worker_javascript_response()
 
 
 @app.get("/", include_in_schema=False)
