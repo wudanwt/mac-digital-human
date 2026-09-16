@@ -31,6 +31,7 @@ from .saas.polish_ui import javascript_response as polish_javascript_response
 from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
 from .saas.theme_ui import css_response as theme_css_response
+from .saas.voice_clone_guard_ui import javascript_response as voice_clone_guard_javascript_response
 from .saas.web import dashboard_html
 from .saas.worker_ui import javascript_response as worker_javascript_response
 
@@ -76,6 +77,7 @@ def _enhanced_dashboard() -> HTMLResponse:
     body = body.replace(
         "</body>",
         '<script src="/avatar-ui.js"></script>'
+        '<script src="/voice-clone-guard.js"></script>'
         '<script src="/product-ui.js"></script>'
         '<script src="/polish-ui.js"></script>'
         '<script src="/interaction-patch.js"></script>'
@@ -116,6 +118,11 @@ def job_detail_css():
 @app.get("/avatar-ui.js", include_in_schema=False)
 def avatar_ui_script():
     return avatar_javascript_response()
+
+
+@app.get("/voice-clone-guard.js", include_in_schema=False)
+def voice_clone_guard_script():
+    return voice_clone_guard_javascript_response()
 
 
 @app.get("/product-ui.js", include_in_schema=False)
