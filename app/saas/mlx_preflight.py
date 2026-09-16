@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+import platform
+import shutil
+from pathlib import Path
+
+from sqlalchemy import text
+
+from ..engines import MuseTalkMLXEngine
+from ..tts.cosyvoice import CosyVoiceTTS
+from .database import engine
+from .settings import saas_settings
+from .storage import object_store
+
+
+def collect() -> dict:
+    checks: dict[str, object] = {
+        "platform": {
+            "system": platform.system(),
+            "machine": platform.machine(),
+            "apple_silicon": platform.system() == "Darwin" and platform.machine() == "arm64",
+        },
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+    }
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        checks["database"] = True
+    except Exception as exc:
+        checks["database"] = str(exc)
+
+    try:
+        import redis
+
+        client = redis.Redis.from_url(saas_settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        client.ping()
+        checks["redis"] = True
+    except Exception as exc:
+        checks["redis"] = str(exc)
+
+    try:
+        object_store.healthcheck()
+        root = Path(saas_settings.storage_local_root).resolve() if saas_settings.storage_backend == "local" else None
+        checks["storage"] = {"ready": True, "root": str(root) if root else saas_settings.storage_backend}
+    except Exception as exc:
+        checks["storage"] = {"ready": False, "error": str(exc)}
+
+    try:
+        checks["musetalk"] = MuseTalkMLXEngine().readiness()
+    except Exception as exc:
+        checks["musetalk"] = {"ready": False, "error": str(exc)}
+
+    try:
+        checks["cosyvoice"] = CosyVoiceTTS().readiness()
+    except Exception as exc:
+        checks["cosyvoice"] = {"ready": False, "error": str(exc)}
+
+    ready = bool(
+        checks["platform"]["apple_silicon"]
+        and checks["ffmpeg"]
+        and checks["database"] is True
+        and checks["redis"] is True
+        and isinstance(checks["storage"], dict)
+        and checks["storage"].get("ready") is True
+        and isinstance(checks["musetalk"], dict)
+        and checks["musetalk"].get("ready") is True
+        and isinstance(checks["cosyvoice"], dict)
+        and checks["cosyvoice"].get("ready") is True
+    )
+    return {"ready": ready, "checks": checks}
+
+
+def main() -> None:
+    payload = collect()
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not payload["ready"]:
+        raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    main()
