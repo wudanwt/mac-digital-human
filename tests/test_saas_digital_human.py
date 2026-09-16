@@ -123,6 +123,7 @@ def test_saas_shell_loads_integrated_avatar_ui() -> None:
     with TestClient(app) as client:
         page = client.get("/")
         assert page.status_code == 200
+        assert page.headers["permissions-policy"] == "camera=(), microphone=(self), geolocation=()"
         assert "/avatar-ui.js" in page.text
         script = client.get("/avatar-ui.js")
         assert script.status_code == 200

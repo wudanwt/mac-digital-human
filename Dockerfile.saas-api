@@ -5,7 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -30,12 +30,24 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
+
+# Keep third-party dependencies in a layer that changes only when
+# pyproject.toml changes. Application source is copied afterwards so normal
+# code edits do not invalidate this comparatively expensive layer.
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    set -eux; \
+    python -m pip install --upgrade pip hatchling; \
+    python -c "import pathlib, tomllib; data = tomllib.load(open('/app/pyproject.toml', 'rb')); deps = data['project']['dependencies'] + data['project']['optional-dependencies']['saas']; pathlib.Path('/tmp/requirements-saas.txt').write_text('\\n'.join(deps) + '\\n')"; \
+    python -m pip install -r /tmp/requirements-saas.txt; \
+    rm /tmp/requirements-saas.txt
+
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY app /app/app
 COPY scripts /app/scripts
 
-RUN python -m pip install --upgrade pip && pip install '.[saas]'
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --no-deps --no-build-isolation .
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/workspace /app/outputs /app/workspace/saas-assets \
     && chown -R appuser:appuser /app
