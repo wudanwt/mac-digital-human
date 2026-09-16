@@ -22,6 +22,8 @@ from .saas.course_studio_ui import javascript_response as course_studio_javascri
 from .saas.course_studio_upgrade import css_response as course_studio_upgrade_css_response
 from .saas.course_studio_upgrade import javascript_response as course_studio_upgrade_javascript_response
 from .saas.interaction_patch import javascript_response as interaction_javascript_response
+from .saas.job_detail_ui import css_response as job_detail_css_response
+from .saas.job_detail_ui import javascript_response as job_detail_javascript_response
 from .saas.middleware import RateLimitMiddleware
 from .saas.polish_ui import javascript_response as polish_javascript_response
 from .saas.product_ui import javascript_response as product_javascript_response
@@ -65,7 +67,8 @@ def _enhanced_dashboard() -> HTMLResponse:
         "</head>",
         '<link rel="stylesheet" href="/saas-theme.css">'
         '<link rel="stylesheet" href="/course-studio.css">'
-        '<link rel="stylesheet" href="/course-studio-upgrade.css"></head>',
+        '<link rel="stylesheet" href="/course-studio-upgrade.css">'
+        '<link rel="stylesheet" href="/job-detail.css"></head>',
     )
     body = body.replace(
         "</body>",
@@ -75,7 +78,8 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/interaction-patch.js"></script>'
         '<script src="/course-studio.js"></script>'
         '<script src="/course-studio-upgrade.js"></script>'
-        '<script src="/worker-ui.js"></script></body>',
+        '<script src="/worker-ui.js"></script>'
+        '<script src="/job-detail.js"></script></body>',
     )
     return HTMLResponse(body)
 
@@ -93,6 +97,11 @@ def course_studio_css():
 @app.get("/course-studio-upgrade.css", include_in_schema=False)
 def course_studio_upgrade_css():
     return course_studio_upgrade_css_response()
+
+
+@app.get("/job-detail.css", include_in_schema=False)
+def job_detail_css():
+    return job_detail_css_response()
 
 
 @app.get("/avatar-ui.js", include_in_schema=False)
@@ -128,6 +137,11 @@ def course_studio_upgrade_script():
 @app.get("/worker-ui.js", include_in_schema=False)
 def worker_ui_script():
     return worker_javascript_response()
+
+
+@app.get("/job-detail.js", include_in_schema=False)
+def job_detail_script():
+    return job_detail_javascript_response()
 
 
 @app.get("/", include_in_schema=False)
