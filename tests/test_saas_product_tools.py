@@ -104,18 +104,43 @@ def test_ppt_outline_parser_and_thumbnail_for_course_studio() -> None:
         assert len(thumbnail.content) > 100
 
 
+def test_builtin_background_catalog_and_preview() -> None:
+    with TestClient(app) as client:
+        token, _, _ = _register(client, "background-tools")
+        headers = _headers(token)
+        response = client.get("/api/saas/course-tools/backgrounds", headers=headers)
+        assert response.status_code == 200, response.text
+        themes = response.json()
+        assert len(themes) >= 8
+        assert {item["id"] for item in themes} >= {
+            "deep-space-grid",
+            "aurora-cyan",
+            "executive-blue",
+            "energy-network",
+        }
+        preview = client.get(themes[0]["preview_url"], headers=headers)
+        assert preview.status_code == 200
+        assert preview.headers["content-type"].startswith("image/png")
+        assert preview.content.startswith(b"\x89PNG")
+
+
 def test_theme_and_course_studio_assets_are_served() -> None:
     with TestClient(app) as client:
         css = client.get("/saas-theme.css")
         studio_css = client.get("/course-studio.css")
+        studio_upgrade_css = client.get("/course-studio-upgrade.css")
         product_js = client.get("/product-ui.js")
         polish_js = client.get("/polish-ui.js")
         studio_js = client.get("/course-studio.js")
+        studio_upgrade_js = client.get("/course-studio-upgrade.js")
         page = client.get("/")
         assert css.status_code == 200
         assert "tech-hero" in css.text
         assert studio_css.status_code == 200
         assert "course-studio-shell" in studio_css.text
+        assert studio_upgrade_css.status_code == 200
+        assert "premium-narration" in studio_upgrade_css.text
+        assert "studio-bg-grid" in studio_upgrade_css.text
         assert product_js.status_code == 200
         assert "COURSE STUDIO" in product_js.text
         assert polish_js.status_code == 200
@@ -123,7 +148,12 @@ def test_theme_and_course_studio_assets_are_served() -> None:
         assert studio_js.status_code == 200
         assert "SCRIPT REVIEW" in studio_js.text
         assert "LAYOUT STUDIO" in studio_js.text
+        assert studio_upgrade_js.status_code == 200
+        assert "上传自定义背景" in studio_upgrade_js.text
+        assert "master_video_asset_id" in studio_upgrade_js.text
         assert page.status_code == 200
         assert "/saas-theme.css" in page.text
         assert "/course-studio.css" in page.text
+        assert "/course-studio-upgrade.css" in page.text
         assert "/course-studio.js" in page.text
+        assert "/course-studio-upgrade.js" in page.text
