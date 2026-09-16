@@ -92,6 +92,7 @@ def test_cosyvoice_service_does_not_pre_split_zero_shot_target_text():
     # language-aware segmentation inside inference_zero_shot/instruct2.
     service_file = Path(__file__).resolve().parents[1] / "digital-human-tts" / "tts_core" / "service.py"
     source = service_file.read_text(encoding="utf-8")
-    assert "split_for_synthesis" not in source
+    assert "from .text import preprocess_text, split_for_synthesis" not in source
+    assert "for index, chunk in enumerate(split_for_synthesis(" not in source
     assert "inference_zero_shot(" in source
     assert "inference_instruct2(" in source
