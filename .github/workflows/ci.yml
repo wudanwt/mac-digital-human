@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: digital_human_test
+          POSTGRES_USER: digital_human
+          POSTGRES_PASSWORD: ci-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U digital_human -d digital_human_test"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    env:
+      DATABASE_URL: postgresql+psycopg://digital_human:ci-postgres-password@127.0.0.1:5432/digital_human_test
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SAAS_ENV: development
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: local
+      SAAS_JWT_SECRET: ci-test-secret-not-for-production-1234567890
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[saas,dev]'
+      - name: Compile
+        run: python -m compileall -q app scripts migrations
+      - name: Shell syntax
+        run: bash -n scripts/saas/start_mlx_worker_mac.sh
+      - name: Browser JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.saas.avatar_ui import JS as avatar_js
+          from app.saas.product_ui import JS as product_js
+          from app.saas.polish_ui import JS as polish_js
+          from app.saas.interaction_patch import JS as interaction_js
+          from app.saas.course_studio_ui import JS as course_studio_js
+          from app.saas.course_studio_upgrade import JS as course_studio_upgrade_js
+          from app.saas.worker_ui import JS as worker_ui_js
+          Path('/tmp/avatar-ui.js').write_text(avatar_js, encoding='utf-8')
+          Path('/tmp/product-ui.js').write_text(product_js, encoding='utf-8')
+          Path('/tmp/polish-ui.js').write_text(polish_js, encoding='utf-8')
+          Path('/tmp/interaction-patch.js').write_text(interaction_js, encoding='utf-8')
+          Path('/tmp/course-studio.js').write_text(course_studio_js, encoding='utf-8')
+          Path('/tmp/course-studio-upgrade.js').write_text(course_studio_upgrade_js, encoding='utf-8')
+          Path('/tmp/worker-ui.js').write_text(worker_ui_js, encoding='utf-8')
+          PY
+          node --check /tmp/avatar-ui.js
+          node --check /tmp/product-ui.js
+          node --check /tmp/polish-ui.js
+          node --check /tmp/interaction-patch.js
+          node --check /tmp/course-studio.js
+          node --check /tmp/course-studio-upgrade.js
+          node --check /tmp/worker-ui.js
+      - name: Migration smoke test on PostgreSQL
+        run: |
+          alembic upgrade head
+          alembic downgrade 0001_initial_saas
+          alembic upgrade head
+      - name: Test PostgreSQL + Redis control plane
+        run: pytest -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose
+        run: |
+          cp .env.saas.example .env.saas
+          docker compose --env-file .env.saas -f docker-compose.saas.yml config >/dev/null
+      - name: Build SaaS API image
+        run: docker build -f Dockerfile.saas-api -t digital-human-saas:ci .
