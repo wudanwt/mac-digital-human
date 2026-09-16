@@ -15,10 +15,12 @@ from fastapi.responses import HTMLResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .saas.api import router as saas_router
-from .saas.avatar_ui import javascript_response
+from .saas.avatar_ui import javascript_response as avatar_javascript_response
 from .saas.bootstrap import initialize
 from .saas.middleware import RateLimitMiddleware
+from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
+from .saas.theme_ui import css_response as theme_css_response
 from .saas.web import dashboard_html
 
 
@@ -52,13 +54,27 @@ app.include_router(saas_router)
 def _enhanced_dashboard() -> HTMLResponse:
     base = dashboard_html()
     body = base.body.decode("utf-8")
-    body = body.replace("</body>", '<script src="/avatar-ui.js"></script></body>')
+    body = body.replace("</head>", '<link rel="stylesheet" href="/saas-theme.css"></head>')
+    body = body.replace(
+        "</body>",
+        '<script src="/avatar-ui.js"></script><script src="/product-ui.js"></script></body>',
+    )
     return HTMLResponse(body)
+
+
+@app.get("/saas-theme.css", include_in_schema=False)
+def saas_theme():
+    return theme_css_response()
 
 
 @app.get("/avatar-ui.js", include_in_schema=False)
 def avatar_ui_script():
-    return javascript_response()
+    return avatar_javascript_response()
+
+
+@app.get("/product-ui.js", include_in_schema=False)
+def product_ui_script():
+    return product_javascript_response()
 
 
 @app.get("/", include_in_schema=False)
