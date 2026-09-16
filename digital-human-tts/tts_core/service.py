@@ -8,7 +8,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from .text import preprocess_text, split_for_synthesis
+from .text import preprocess_text
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,13 @@ class SynthesisResult:
 
 
 class CosyVoiceService:
-    """Small, reusable CosyVoice 2 adapter for a digital-human runtime."""
+    """Small, reusable CosyVoice 2 adapter for a digital-human runtime.
+
+    CosyVoice already owns text normalization and segmentation internally.  Do
+    not pre-split target text into short clauses before ``inference_zero_shot``:
+    short target chunks relative to the prompt transcript are explicitly a bad
+    operating point for CosyVoice and can produce unstable / unrelated speech.
+    """
 
     def __init__(self, bundle_dir: str | Path | None = None, pause_seconds: float = 0.22):
         root = Path(bundle_dir or Path(__file__).resolve().parents[1]).resolve()
@@ -46,7 +52,8 @@ class CosyVoiceService:
             raise ValueError("text is empty after preprocessing")
 
         use_instruct = bool(instruct and instruct.strip())
-        if not use_instruct and not reference_text.strip():
+        prompt_text = reference_text.strip()
+        if not use_instruct and not prompt_text:
             raise ValueError("reference_text must exactly match reference_audio when instruct is not specified")
 
         instruct_prompt = ""
@@ -55,21 +62,38 @@ class CosyVoiceService:
             if not instruct_prompt.endswith("<|endofprompt|>"):
                 instruct_prompt += "<|endofprompt|>"
 
+        # IMPORTANT: pass the complete target text to CosyVoice.  Its own
+        # text_frontend performs language-aware normalization / paragraph
+        # splitting.  The previous extra split_for_synthesis(max_chars=48)
+        # frequently created tiny chunks that were much shorter than the prompt
+        # transcript and could make zero-shot generation drift into gibberish.
+        if instruct_prompt:
+            generator = self.model.inference_instruct2(
+                normalized,
+                instruct_prompt,
+                str(reference_audio),
+                speed=float(speed),
+                stream=False,
+            )
+        else:
+            generator = self.model.inference_zero_shot(
+                normalized,
+                prompt_text,
+                str(reference_audio),
+                speed=float(speed),
+                stream=False,
+            )
+
         outputs: list[torch.Tensor] = []
         pause = torch.zeros(1, int(self.sample_rate * self.pause_seconds), dtype=torch.float32)
-        for index, chunk in enumerate(split_for_synthesis(normalized)):
-            if index:
+        for item in generator:
+            speech = item.get("tts_speech")
+            if speech is None:
+                continue
+            if outputs and self.pause_seconds > 0:
                 outputs.append(pause)
-            if instruct_prompt:
-                generator = self.model.inference_instruct2(
-                    chunk, instruct_prompt, str(reference_audio), speed=float(speed), stream=False
-                )
-            else:
-                generator = self.model.inference_zero_shot(
-                    chunk, reference_text.strip(), str(reference_audio), speed=float(speed), stream=False
-                )
-            for item in generator:
-                outputs.append(item["tts_speech"])
+            outputs.append(speech)
+
         if not outputs:
             raise RuntimeError("CosyVoice produced no audio")
         audio = torch.concat(outputs, dim=1).squeeze(0).cpu().numpy().astype(np.float32)
