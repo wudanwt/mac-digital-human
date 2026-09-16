@@ -8,6 +8,7 @@ from .admin_api import router as admin_router
 from .assets_api import router as assets_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
+from .backgrounds_api import router as backgrounds_router
 from .billing_api import router as billing_router
 from .compliance_api import admin_router as admin_compliance_router
 from .compliance_api import router as compliance_router
@@ -85,6 +86,8 @@ def capabilities() -> dict:
         "courses": True,
         "ppt_outline_parser": True,
         "course_readiness_check": True,
+        "course_studio_background_upload": True,
+        "course_studio_builtin_backgrounds": True,
         "render_queue": True,
         "usage_quota": True,
         "plans": True,
@@ -108,6 +111,7 @@ for child in (
     avatar_router,
     course_router,
     course_tools_router,
+    backgrounds_router,
     job_router,
     dashboard_router,
     billing_router,
