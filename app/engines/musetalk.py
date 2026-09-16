@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import shutil
 import subprocess
@@ -44,6 +45,7 @@ class MuseTalkMLXEngine:
             "engine": self.name,
             "ready": all(checks.values()),
             "variant": variant,
+            "resident_runtime": os.getenv("MUSETALK_RESIDENT_RUNTIME", "1").strip().lower() not in {"0", "false", "no", "off"},
             "checks": checks,
         }
 
@@ -93,6 +95,10 @@ class MuseTalkMLXEngine:
                 log.write(f"\n[repair] filled {repaired} frames with neighboring face boxes\n")
         return repaired
 
+    @staticmethod
+    def _resident_enabled() -> bool:
+        return os.getenv("MUSETALK_RESIDENT_RUNTIME", "1").strip().lower() not in {"0", "false", "no", "off"}
+
     def render(
         self,
         video: Path,
@@ -124,14 +130,16 @@ class MuseTalkMLXEngine:
         started = time.time()
         self._run(
             [
-                "ffmpeg", "-y", "-i", str(audio), "-vn", "-ar", "16000", "-ac", "1",
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                "-i", str(audio), "-vn", "-ar", "16000", "-ac", "1",
                 "-c:a", "pcm_s16le", str(normalized_audio),
             ],
             log_file=log,
         )
 
-        # Check master video pre-extracted cache
+        # Check master video pre-extracted face-coordinate/frame cache.
         import hashlib
+
         stat = video.stat()
         video_hash = hashlib.md5(f"{video.resolve()}:{stat.st_size}:{stat.st_mtime}".encode()).hexdigest()[:12]
         cache_dir = settings.workspace_dir / "cache" / "musetalk" / video_hash
@@ -142,15 +150,15 @@ class MuseTalkMLXEngine:
         repaired = 0
         if cache_coords.exists() and cache_frames.exists() and cache_video.exists():
             coords = cache_coords
-            if log:
-                with log.open("a", encoding="utf-8") as lf:
-                    lf.write(f"\n[cache hit] Reusing pre-extracted face coordinates from {cache_coords}\n")
+            with log.open("a", encoding="utf-8") as lf:
+                lf.write(f"\n[cache hit] Reusing pre-extracted face coordinates from {cache_coords}\n")
         else:
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_frames.mkdir(parents=True, exist_ok=True)
             self._run(
                 [
-                    "ffmpeg", "-y", "-i", str(video), "-vf", f"fps={settings.musetalk_target_fps}",
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                    "-i", str(video), "-vf", f"fps={settings.musetalk_target_fps}",
                     "-an", "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p",
                     str(cache_video),
                 ],
@@ -169,24 +177,47 @@ class MuseTalkMLXEngine:
                 cwd=mlx,
                 log_file=log,
             )
-            self._repair_missing_coords(cache_coords, log)
+            repaired = self._repair_missing_coords(cache_coords, log)
             coords = cache_coords
 
-        mlx = settings.musetalk_mlx_dir
-        final_abs = Path(final).resolve()
-        final_abs.parent.mkdir(parents=True, exist_ok=True)
-        self._run(
-            [
-                sys.executable,
-                str(mlx / "scripts" / "build_video.py"),
-                str(Path(coords).resolve()),
-                str(Path(normalized_audio).resolve()),
-                str(final_abs),
-                "--variant", variant,
-            ],
-            cwd=mlx,
-            log_file=log,
-        )
+        runtime_metadata: dict[str, object] = {"resident": False}
+        resident_error: str | None = None
+        if self._resident_enabled():
+            try:
+                from .musetalk_runtime import get_resident_runtime
+
+                runtime = get_resident_runtime(variant)
+                runtime_metadata = runtime.render(
+                    coords_file=Path(coords).resolve(),
+                    audio=Path(normalized_audio).resolve(),
+                    output=Path(final).resolve(),
+                    cache_dir=cache_dir,
+                    log_file=log,
+                )
+            except Exception as exc:  # noqa: BLE001 - reliability fallback is deliberate
+                resident_error = str(exc)
+                with log.open("a", encoding="utf-8") as lf:
+                    lf.write(f"\n[resident-runtime fallback] {resident_error}\n")
+
+        # Safe fallback to the upstream per-slide helper.  Keeping this path makes
+        # the optimization reversible on any Mac where a third-party runtime
+        # dependency behaves differently.
+        if not Path(final).exists():
+            mlx = settings.musetalk_mlx_dir
+            final_abs = Path(final).resolve()
+            final_abs.parent.mkdir(parents=True, exist_ok=True)
+            self._run(
+                [
+                    sys.executable,
+                    str(mlx / "scripts" / "build_video.py"),
+                    str(Path(coords).resolve()),
+                    str(Path(normalized_audio).resolve()),
+                    str(final_abs),
+                    "--variant", variant,
+                ],
+                cwd=mlx,
+                log_file=log,
+            )
 
         elapsed = time.time() - started
         metadata = {
@@ -197,6 +228,8 @@ class MuseTalkMLXEngine:
             "variant": variant,
             "output": str(final),
             "repaired_face_boxes": repaired,
+            "resident_runtime": runtime_metadata,
+            "resident_fallback_error": resident_error,
             "elapsed_seconds": round(elapsed, 2),
         }
         (work / "job.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
