@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..ppt import PresentationParser
+from ..ppt import PresentationParser, PPTRenderer
 from .database import get_db
 from .models import Asset, Avatar, ConsentRecord, Course, VoiceProfile
 from .security import Principal, get_principal
@@ -48,6 +49,25 @@ def _active_consent(db: Session, tenant_id: str, subject_type: str, subject_id: 
     )
 
 
+def _preview_key(tenant_id: str, asset_id: str, index: int) -> str:
+    return f"{tenant_id}/course-previews/{asset_id}/slide_{index:03d}.png"
+
+
+def _render_previews(asset: Asset, tenant_id: str) -> tuple[object, list[Path]]:
+    suffix = Path(asset.name).suffix.lower() or ".pptx"
+    temp = tempfile.TemporaryDirectory(prefix="saas-course-preview-")
+    root = Path(temp.name)
+    local = root / f"course{suffix}"
+    object_store.materialize(asset.object_key, local)
+    deck = PresentationParser.parse(local)
+    rendered = PPTRenderer.render_deck(deck, root / "slides", width=1280, height=720)
+    for index, image in enumerate(rendered, start=1):
+        object_store.put_file(image, _preview_key(tenant_id, asset.id, index))
+    # The TemporaryDirectory must stay alive until callers have consumed metadata.
+    deck._preview_temp = temp  # type: ignore[attr-defined]
+    return deck, rendered
+
+
 @router.get("/ppt/{asset_id}/outline")
 def ppt_outline(
     asset_id: str,
@@ -60,14 +80,10 @@ def ppt_outline(
     if asset.kind not in {"ppt", "document"} or Path(asset.name).suffix.lower() not in {".pptx", ".ppt", ".pdf"}:
         raise HTTPException(status_code=422, detail="Asset is not a supported PPT/PDF course file")
 
-    suffix = Path(asset.name).suffix.lower() or ".pptx"
-    with tempfile.TemporaryDirectory(prefix="saas-course-outline-") as temp_dir:
-        local = Path(temp_dir) / f"course{suffix}"
-        object_store.materialize(asset.object_key, local)
-        try:
-            deck = PresentationParser.parse(local)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Course file could not be parsed: {exc}") from exc
+    try:
+        deck, _ = _render_previews(asset, principal.tenant_id)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Course file could not be parsed/rendered: {exc}") from exc
 
     return {
         "asset_id": asset.id,
@@ -81,10 +97,41 @@ def ppt_outline(
                 "notes": slide.notes,
                 "narration": slide.narration,
                 "layout": slide.layout,
+                "thumbnail_url": f"/api/saas/course-tools/ppt/{asset.id}/slides/{slide.index}/thumbnail",
             }
             for slide in deck.slides
         ],
     }
+
+
+@router.get("/ppt/{asset_id}/slides/{slide_index}/thumbnail")
+def ppt_thumbnail(
+    asset_id: str,
+    slide_index: int,
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    asset = _asset(db, principal.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="PPT asset not found")
+    if slide_index < 1:
+        raise HTTPException(status_code=404, detail="Slide not found")
+    key = _preview_key(principal.tenant_id, asset_id, slide_index)
+    signed = object_store.signed_get_url(key)
+    if signed:
+        return RedirectResponse(signed, status_code=307)
+    path = object_store.local_path(key)
+    if path is None or not path.exists():
+        try:
+            deck, _ = _render_previews(asset, principal.tenant_id)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Slide preview unavailable: {exc}") from exc
+        if slide_index > deck.total_slides:
+            raise HTTPException(status_code=404, detail="Slide not found")
+        path = object_store.local_path(key)
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="Slide preview bytes not found")
+    return FileResponse(path, media_type="image/png", filename=f"slide_{slide_index:03d}.png")
 
 
 @router.get("/courses/{course_id}/readiness")
