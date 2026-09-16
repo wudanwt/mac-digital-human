@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +23,7 @@ class SynthesisResult:
 class CosyVoiceService:
     """Small, reusable CosyVoice 2 adapter for a digital-human runtime.
 
-    CosyVoice already owns text normalization and segmentation internally.  Do
+    CosyVoice already owns text normalization and segmentation internally. Do
     not pre-split target text into short clauses before ``inference_zero_shot``:
     short target chunks relative to the prompt transcript are explicitly a bad
     operating point for CosyVoice and can produce unstable / unrelated speech.
@@ -38,6 +40,19 @@ class CosyVoiceService:
         self.pause_seconds = pause_seconds
         self.model = CosyVoice2(str(root / "models" / "CosyVoice2-0.5B"), load_jit=False)
         self.model.model.llm.to(torch.float32)
+
+    @staticmethod
+    def _set_seed() -> None:
+        """Mirror CosyVoice's official demo behavior for repeatable sampling."""
+        try:
+            seed = int(os.getenv("COSYVOICE_SEED", "1986"))
+        except ValueError:
+            seed = 1986
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
     def synthesize(
         self,
@@ -62,11 +77,12 @@ class CosyVoiceService:
             if not instruct_prompt.endswith("<|endofprompt|>"):
                 instruct_prompt += "<|endofprompt|>"
 
-        # IMPORTANT: pass the complete target text to CosyVoice.  Its own
+        # IMPORTANT: pass the complete target text to CosyVoice. Its own
         # text_frontend performs language-aware normalization / paragraph
-        # splitting.  The previous extra split_for_synthesis(max_chars=48)
+        # splitting. The previous extra split_for_synthesis(max_chars=48)
         # frequently created tiny chunks that were much shorter than the prompt
         # transcript and could make zero-shot generation drift into gibberish.
+        self._set_seed()
         if instruct_prompt:
             generator = self.model.inference_instruct2(
                 normalized,
