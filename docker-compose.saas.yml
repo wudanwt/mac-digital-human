@@ -75,6 +75,16 @@ services:
     volumes:
       - saas-outputs:/app/outputs
       - saas-workspace:/app/workspace
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, redis; redis.Redis.from_url(os.environ['REDIS_URL'], socket_connect_timeout=2, socket_timeout=2).ping()"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
     profiles: ["mock-worker"]
 
