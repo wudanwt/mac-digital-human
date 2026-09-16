@@ -9,11 +9,45 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 2
 fi
 
+# Load .env.saas as dotenv data, not as shell source code.
+# Docker-style .env files legitimately allow unquoted values containing spaces
+# (for example: SAAS_APP_NAME=Digital Human SaaS Studio), which `source` cannot.
+# Existing shell environment variables always win over values from the file.
+load_dotenv() {
+  local file="$1" line key value first last
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    line="${line#export }"
+    [[ "$line" == *"="* ]] || continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+    # Remove one matching pair of surrounding quotes without evaluating the value.
+    if [[ ${#value} -ge 2 ]]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if [[ ( "$first" == '"' && "$last" == '"' ) || ( "$first" == "'" && "$last" == "'" ) ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$file"
+}
+
 if [[ -f .env.saas ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env.saas
-  set +a
+  load_dotenv .env.saas
 fi
 
 DB_NAME="${SAAS_DB_NAME:-digital_human}"
