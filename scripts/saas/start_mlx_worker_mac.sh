@@ -65,14 +65,41 @@ export STORAGE_LOCAL_ROOT="${SAAS_HOST_STORAGE_ROOT:-$ROOT/workspace/saas-assets
 
 mkdir -p "$STORAGE_LOCAL_ROOT" "$ROOT/workspace" "$ROOT/outputs"
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  if [[ "$PYTHON_BIN" == */* ]]; then
+    if [[ ! -x "$PYTHON_BIN" ]]; then
+      echo "PYTHON_BIN is not executable: $PYTHON_BIN" >&2
+      exit 2
+    fi
+  elif ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "PYTHON_BIN was not found on PATH: $PYTHON_BIN" >&2
+    exit 2
+  fi
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python)"
+else
+  echo "Python was not found. Create .venv or set PYTHON_BIN to a Python 3 executable." >&2
+  exit 2
+fi
 
 echo "Mac MLX SaaS Worker"
 echo "  Database : $DATABASE_URL"
 echo "  Redis    : $REDIS_URL"
 echo "  Storage  : $STORAGE_LOCAL_ROOT"
 echo "  Queue    : ${SAAS_QUEUE_NAME:-avatar:render}:musetalk"
+echo "  Python   : $PYTHON_BIN"
 echo
+
+if ! "$PYTHON_BIN" -c "import psycopg, redis, sqlalchemy" >/dev/null 2>&1; then
+  echo "The selected Python environment is missing SaaS dependencies." >&2
+  echo "Install them with:" >&2
+  echo "  uv pip install --python \"$PYTHON_BIN\" -e '.[saas]'" >&2
+  exit 2
+fi
 
 echo "Running preflight..."
 "$PYTHON_BIN" -m app.saas.mlx_preflight

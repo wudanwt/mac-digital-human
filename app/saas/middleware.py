@@ -15,6 +15,12 @@ from .settings import saas_settings
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate limiter with Redis in cloud and process-local fallback in development."""
 
+    # Frequent, advisory UI polling must not consume the same allowance as
+    # interactive API calls such as saving a course. Keep it rate-limited, but
+    # isolate its counter so a stuck or duplicated browser tab cannot block
+    # writes for the signed-in user.
+    _POLLING_PATHS = {"/api/saas/workers/status"}
+
     def __init__(self, app) -> None:
         super().__init__(app)
         self.limit = max(1, saas_settings.rate_limit_per_minute)
@@ -37,6 +43,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return f"token:{digest}"
         client = request.client.host if request.client else "unknown"
         return f"ip:{client}"
+
+    @classmethod
+    def _bucket_key(cls, request: Request) -> str:
+        traffic_class = (
+            "poll"
+            if request.method == "GET" and request.url.path in cls._POLLING_PATHS
+            else "interactive"
+        )
+        return f"{traffic_class}:{cls._identity(request)}"
 
     def _allow_memory(self, key: str) -> bool:
         now = time.time()
@@ -64,10 +79,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/api/") and request.url.path not in {"/api/saas/health"}:
-            key = self._identity(request)
+            key = self._bucket_key(request)
             allowed = self._allow_redis(key) if self._redis is not None else self._allow_memory(key)
             if not allowed:
-                return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests"},
+                    headers={"Retry-After": "60"},
+                )
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")

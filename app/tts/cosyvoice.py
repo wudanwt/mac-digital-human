@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,52 @@ class CosyVoiceTTS:
         default_ref_dir = self.bundle_dir / "voices" / "wudan"
         self._default_ref_audio = default_ref_dir / "reference.wav"
         self._default_ref_text = "今天欢迎来到会议的现场，我很开心，也很荣幸的给大家介绍我们最新的产品。"
+        self._normalized_ref_source: Path | None = None
+        self._normalized_ref_audio: Path | None = None
+
+    def _normalize_reference_audio(self, source: Path, target_dir: Path) -> Path:
+        """Convert browser/upload audio to a format CosyVoice can always decode."""
+        if source.suffix.lower() == ".wav":
+            return source
+        if (
+            self._normalized_ref_source == source
+            and self._normalized_ref_audio is not None
+            and self._normalized_ref_audio.exists()
+        ):
+            return self._normalized_ref_audio
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f".{source.stem}-cosyvoice-24k.wav"
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(source),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "24000",
+                "-c:a",
+                "pcm_s16le",
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0 or not target.exists():
+            target.unlink(missing_ok=True)
+            detail = proc.stderr.strip() or "unknown FFmpeg error"
+            raise TTSError(f"Reference voice audio conversion failed: {detail}")
+
+        self._normalized_ref_source = source
+        self._normalized_ref_audio = target
+        return target
 
     def _get_service(self):
         if CosyVoiceTTS._shared_service is not None and CosyVoiceTTS._shared_bundle_dir == str(self.bundle_dir):
@@ -117,6 +164,8 @@ class CosyVoiceTTS:
                 ref_text = txt_candidate.read_text(encoding="utf-8").strip()
             else:
                 ref_text = self._default_ref_text
+
+        resolved_ref_audio = self._normalize_reference_audio(resolved_ref_audio, out_path.parent)
 
         service = self._get_service()
         try:

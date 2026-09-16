@@ -6,6 +6,7 @@ from fastapi.responses import Response
 JS = r'''
 (() => {
   let checking=false;
+  let mountedRadio=null;
 
   async function patchWorkerOptions(){
     if(checking||!token)return;
@@ -25,10 +26,13 @@ JS = r'''
           badge.className='worker-live-badge';
           option.appendChild(badge);
         }
-        badge.textContent=info.online?`● Worker 在线 · ${info.count}`:'○ Worker 未启动';
-        badge.style.cssText=`margin-top:7px;font-size:10px;color:${info.online?'#69ddb4':'#ff9d9d'}`;
-        radio.disabled=!info.online;
-        option.style.opacity=info.online?'1':'.55';
+        const badgeText=info.online?`● Worker 在线 · ${info.count}`:'○ Worker 未启动';
+        const badgeStyle=`margin-top:7px;font-size:10px;color:${info.online?'#69ddb4':'#ff9d9d'}`;
+        if(badge.textContent!==badgeText)badge.textContent=badgeText;
+        if(badge.style.cssText!==badgeStyle)badge.style.cssText=badgeStyle;
+        if(radio.disabled===info.online)radio.disabled=!info.online;
+        const opacity=info.online?'1':'.55';
+        if(option.style.opacity!==opacity)option.style.opacity=opacity;
         if(!info.online&&radio.checked){
           radio.checked=false;
           const fallback=radios.find(x=>!x.disabled);
@@ -51,11 +55,25 @@ JS = r'''
     }
   },true);
 
+  function patchNewWorkerPanel(){
+    const radio=document.querySelector('input[name="studioEngine"]');
+    if(!radio){mountedRadio=null;return}
+    if(radio===mountedRadio)return;
+    mountedRadio=radio;
+    patchWorkerOptions();
+  }
+
   const observer=new MutationObserver(()=>{
-    if(document.querySelector('input[name="studioEngine"]'))setTimeout(patchWorkerOptions,0);
+    patchNewWorkerPanel();
   });
   observer.observe(document.body,{childList:true,subtree:true});
-  setInterval(()=>{if(document.querySelector('input[name="studioEngine"]'))patchWorkerOptions()},5000);
+  patchNewWorkerPanel();
+  setInterval(()=>{
+    if(!document.hidden&&document.querySelector('input[name="studioEngine"]'))patchWorkerOptions();
+  },15000);
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden)patchNewWorkerPanel();
+  });
 })();
 '''
 

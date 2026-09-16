@@ -33,7 +33,7 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
 fi
 PY="$ROOT/.venv/bin/python"
 
-uv pip install --python "$PY" -e .
+uv pip install --python "$PY" -e '.[saas]'
 
 mkdir -p vendor models workspace outputs samples profiles benchmarks/local
 
@@ -76,4 +76,3 @@ echo "安装阶段完成。"
 echo "CLI: bash scripts/run_avatar.sh --video samples/master.mp4 --audio samples/voice.wav"
 echo "Web: bash scripts/run_web.sh"
 echo "课程生产: bash scripts/run_lecture.sh"
-

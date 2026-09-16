@@ -93,7 +93,7 @@ def _start_worker_heartbeat(engine: str) -> None:
                 "updated_at": time.time(),
             }
             try:
-                client.setex(key, 20, json.dumps(payload, ensure_ascii=False))
+                client.set(key, json.dumps(payload, ensure_ascii=False), ex=20)
             except Exception:
                 pass
             time.sleep(5)
