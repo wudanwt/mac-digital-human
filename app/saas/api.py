@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 
+from .account_api import router as account_router
 from .admin_api import router as admin_router
 from .assets_api import router as assets_router
 from .auth_api import router as auth_router
@@ -10,6 +11,7 @@ from .auth_api import workspace_router
 from .billing_api import router as billing_router
 from .compliance_api import admin_router as admin_compliance_router
 from .compliance_api import router as compliance_router
+from .course_tools_api import router as course_tools_router
 from .database import engine
 from .digital_human_api import router as digital_human_router
 from .settings import saas_settings
@@ -71,6 +73,8 @@ def health() -> dict:
 def capabilities() -> dict:
     return {
         "auth": True,
+        "account_profile": True,
+        "password_change": True,
         "multi_tenant": True,
         "assets": True,
         "digital_human_assets": True,
@@ -79,6 +83,8 @@ def capabilities() -> dict:
         "avatars": True,
         "voice_profiles": True,
         "courses": True,
+        "ppt_outline_parser": True,
+        "course_readiness_check": True,
         "render_queue": True,
         "usage_quota": True,
         "plans": True,
@@ -94,12 +100,14 @@ def capabilities() -> dict:
 
 for child in (
     auth_router,
+    account_router,
     workspace_router,
     assets_router,
     digital_human_router,
     voice_router,
     avatar_router,
     course_router,
+    course_tools_router,
     job_router,
     dashboard_router,
     billing_router,
