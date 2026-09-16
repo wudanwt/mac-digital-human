@@ -18,6 +18,7 @@ from .saas.api import router as saas_router
 from .saas.avatar_ui import javascript_response as avatar_javascript_response
 from .saas.bootstrap import initialize
 from .saas.middleware import RateLimitMiddleware
+from .saas.polish_ui import javascript_response as polish_javascript_response
 from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
 from .saas.theme_ui import css_response as theme_css_response
@@ -57,7 +58,7 @@ def _enhanced_dashboard() -> HTMLResponse:
     body = body.replace("</head>", '<link rel="stylesheet" href="/saas-theme.css"></head>')
     body = body.replace(
         "</body>",
-        '<script src="/avatar-ui.js"></script><script src="/product-ui.js"></script></body>',
+        '<script src="/avatar-ui.js"></script><script src="/product-ui.js"></script><script src="/polish-ui.js"></script></body>',
     )
     return HTMLResponse(body)
 
@@ -75,6 +76,11 @@ def avatar_ui_script():
 @app.get("/product-ui.js", include_in_schema=False)
 def product_ui_script():
     return product_javascript_response()
+
+
+@app.get("/polish-ui.js", include_in_schema=False)
+def polish_ui_script():
+    return polish_javascript_response()
 
 
 @app.get("/", include_in_schema=False)
