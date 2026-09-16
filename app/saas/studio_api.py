@@ -41,6 +41,12 @@ class VoiceCreate(BaseModel):
     consent_confirmed: bool = False
 
 
+class VoiceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    transcript: str | None = Field(default=None, min_length=1, max_length=10000)
+    transcript_verified: bool | None = None
+
+
 class AvatarCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     image_asset_id: str | None = None
@@ -251,6 +257,49 @@ def create_voice(
             statement="I confirm that I have authorization to use this voice recording for synthetic voice generation.",
         )
     audit(db, action="voice.create", tenant_id=principal.tenant_id, user_id=principal.user_id, target_type="voice", target_id=item.id)
+    db.commit()
+    return _voice_dict(item)
+
+
+@voice_router.patch("/{voice_id}")
+def update_voice(
+    voice_id: str,
+    body: VoiceUpdate,
+    principal: Annotated[Principal, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    item = _tenant_voice(db, principal.tenant_id, voice_id)
+    name_changed = False
+    transcript_changed = False
+    if body.name is not None:
+        clean_name = body.name.strip()
+        if not clean_name:
+            raise HTTPException(status_code=422, detail="Voice name cannot be empty")
+        name_changed = clean_name != item.name
+        item.name = clean_name
+    if body.transcript is not None:
+        clean_transcript = body.transcript.strip()
+        if not clean_transcript:
+            raise HTTPException(status_code=422, detail="Reference recording transcript cannot be empty")
+        transcript_changed = clean_transcript != item.transcript
+        item.transcript = clean_transcript
+    settings = json.loads(item.settings_json or "{}")
+    if not isinstance(settings, dict):
+        settings = {}
+    if body.transcript_verified is not None:
+        settings["transcript_verified"] = body.transcript_verified
+    elif transcript_changed:
+        settings["transcript_verified"] = False
+    item.settings_json = json.dumps(settings, ensure_ascii=False)
+    audit(
+        db,
+        action="voice.update",
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        target_type="voice",
+        target_id=item.id,
+        details={"name_changed": name_changed, "transcript_changed": transcript_changed},
+    )
     db.commit()
     return _voice_dict(item)
 

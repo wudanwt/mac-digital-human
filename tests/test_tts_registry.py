@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import importlib.util
 
 from app.tts import CosyVoiceTTS, create_tts, infer_provider
 
@@ -96,3 +97,14 @@ def test_cosyvoice_service_does_not_pre_split_zero_shot_target_text():
     assert "for index, chunk in enumerate(split_for_synthesis(" not in source
     assert "inference_zero_shot(" in source
     assert "inference_instruct2(" in source
+
+
+def test_tts_text_preprocessing_never_invents_business_explanations():
+    text_file = Path(__file__).resolve().parents[1] / "digital-human-tts" / "tts_core" / "text.py"
+    spec = importlib.util.spec_from_file_location("tts_text_contract", text_file)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    source = "我们要学的是一条判断链——变、影、痛、值、证。"
+    assert module.preprocess_text(source) == source

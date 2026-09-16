@@ -95,6 +95,29 @@ class MuseTalkMLXEngine:
                 log.write(f"\n[repair] filled {repaired} frames with neighboring face boxes\n")
         return repaired
 
+    @classmethod
+    def _landmark_cache_complete(cls, coords_file: Path, frames_dir: Path) -> bool:
+        """Return true only when landmark extraction produced a complete, usable cache.
+
+        CoreML/ONNX Runtime can abort during interpreter teardown on macOS even
+        after the extractor has flushed a valid ``coords.pkl``.  Validating the
+        artifact lets the render continue in that specific case without hiding
+        genuine extraction failures or accepting a partial cache.
+        """
+        if not coords_file.is_file() or not frames_dir.is_dir():
+            return False
+        try:
+            with coords_file.open("rb") as f:
+                meta = pickle.load(f)
+            coords = list(meta.get("coords", []))
+            declared = int(meta.get("n", len(coords)))
+            frame_count = sum(1 for _ in frames_dir.glob("*.png"))
+        except (OSError, ValueError, TypeError, pickle.PickleError):
+            return False
+        if not coords or declared != len(coords) or frame_count != len(coords):
+            return False
+        return any(tuple(box) != cls.PLACEHOLDER for box in coords)
+
     @staticmethod
     def _resident_enabled() -> bool:
         return os.getenv("MUSETALK_RESIDENT_RUNTIME", "1").strip().lower() not in {"0", "false", "no", "off"}
@@ -148,7 +171,7 @@ class MuseTalkMLXEngine:
         cache_video = cache_dir / "master_25fps.mp4"
 
         repaired = 0
-        if cache_coords.exists() and cache_frames.exists() and cache_video.exists():
+        if cache_video.exists() and self._landmark_cache_complete(cache_coords, cache_frames):
             coords = cache_coords
             with log.open("a", encoding="utf-8") as lf:
                 lf.write(f"\n[cache hit] Reusing pre-extracted face coordinates from {cache_coords}\n")
@@ -168,17 +191,27 @@ class MuseTalkMLXEngine:
             extract_script = settings.root / "scripts" / "extract_landmarks.py"
             if not extract_script.exists():
                 extract_script = mlx / "scripts" / "extract_landmarks.py"
-            self._run(
-                [
-                    sys.executable,
-                    str(extract_script),
-                    str(cache_video), str(cache_frames), str(cache_coords),
-                ],
-                cwd=mlx,
-                log_file=log,
-            )
-            repaired = self._repair_missing_coords(cache_coords, log)
+            try:
+                self._run(
+                    [
+                        sys.executable,
+                        str(extract_script),
+                        str(cache_video), str(cache_frames), str(cache_coords),
+                    ],
+                    cwd=mlx,
+                    log_file=log,
+                )
+            except EngineError:
+                if not self._landmark_cache_complete(cache_coords, cache_frames):
+                    raise
+                with log.open("a", encoding="utf-8") as lf:
+                    lf.write(
+                        "\n[landmark extractor teardown warning] Process exited non-zero after "
+                        "writing a complete cache; continuing with validated coordinates.\n"
+                    )
             coords = cache_coords
+
+        repaired = self._repair_missing_coords(coords, log)
 
         runtime_metadata: dict[str, object] = {"resident": False}
         resident_error: str | None = None

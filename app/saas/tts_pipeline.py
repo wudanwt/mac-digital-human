@@ -100,12 +100,12 @@ def build_course_tts(
     )
 
 
-def _ffmpeg_audio(source: Path, target: Path, filters: list[str]) -> Path:
+def _ffmpeg_audio(source: Path, target: Path, filters: list[str], *, sample_rate: int = 16000) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source)]
     if filters:
         command.extend(["-af", ",".join(filters)])
-    command.extend(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(target)])
+    command.extend(["-ar", str(sample_rate), "-ac", "1", "-c:a", "pcm_s16le", str(target)])
     proc = subprocess.run(command, capture_output=True, text=True)
     if proc.returncode != 0 or not target.exists():
         raise RuntimeError(proc.stderr.strip() or "FFmpeg audio normalization failed")
@@ -121,16 +121,18 @@ def synthesize_course_audio(runtime: CourseTTSRuntime, text: str, target: Path) 
     runtime.provider.synthesize(text, raw)
 
     if runtime.provider_name == "cosyvoice2":
-        # CosyVoice 2 already performs high-fidelity synthesis.  Keep only the
-        # gentle cleanup/gain used in the local lecture pipeline.
-        filters = ["highpass=f=60", "volume=1.05"]
+        # Preserve CosyVoice's native 24 kHz output for the final course audio.
+        # MuseTalk creates its own 16 kHz analysis copy for lip sync.  The old
+        # pipeline downsampled the actual soundtrack to 16 kHz and added gain,
+        # which made high-frequency artifacts more audible and could clip peaks.
+        filters = ["highpass=f=60", "alimiter=limit=0.95:attack=5:release=50:level=false"]
     else:
         filters = ["highpass=f=80", "lowpass=f=7500", "afftdn=nf=-25"]
         if abs(runtime.speed - 1.0) > 0.03:
             filters.append(f"atempo={runtime.speed}")
 
     try:
-        return _ffmpeg_audio(raw, target, filters)
+        return _ffmpeg_audio(raw, target, filters, sample_rate=24000 if runtime.provider_name == "cosyvoice2" else 16000)
     finally:
         raw.unlink(missing_ok=True)
 

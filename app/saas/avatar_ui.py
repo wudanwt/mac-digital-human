@@ -17,6 +17,19 @@ JS = r'''
     return '<span class="badge failed">配置不完整</span>';
   }
 
+  function dhTranscriptPanel(voice) {
+    const transcript = String(voice?.transcript || '').trim();
+    const verified = Boolean(voice?.settings?.transcript_verified);
+    return `<div style="margin-top:12px;padding:12px;border:1px solid ${transcript ? '#29445a' : '#663744'};border-radius:11px;background:${transcript ? '#0a1620' : '#241117'}">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:7px">
+        <b style="font-size:12px;color:#9fc9eb">参考录音逐字稿</b>
+        <span class="badge ${verified ? 'ready' : transcript ? 'running' : 'failed'}">${verified ? '已人工核对' : transcript ? '已填写 · 待核对' : '缺失'}</span>
+      </div>
+      <div style="white-space:pre-wrap;word-break:break-word;line-height:1.75;color:${transcript ? '#edf6ff' : '#ff9bac'}">${transcript ? dhEsc(transcript) : '尚未填写逐字稿，当前声音不可用于可靠克隆。'}</div>
+      <div class="muted" style="margin-top:7px;font-size:11px">这里必须完整记录参考录音实际说出的每一个字，不能填写讲稿或近似内容。</div>
+    </div>`;
+  }
+
   async function dhBlobUrl(assetId) {
     const r = await fetch(API + '/assets/' + assetId + '/download', {headers:{Authorization:'Bearer ' + token}});
     if (!r.ok) throw new Error('素材预览失败');
@@ -55,9 +68,11 @@ JS = r'''
           <div style="font-weight:700">默认声音：${dhEsc(voice?.name || '未配置')}</div>
           <div class="muted">${voice ? 'CosyVoice 克隆声音' : '创建课程前需要配置声音'}</div>
         </div>
+        ${voice ? dhTranscriptPanel(voice) : ''}
         <div class="actions" style="margin-top:14px">
           ${item.master_video?.id ? `<button class="secondary" data-dh-preview-video="${item.master_video.id}">预览母版</button>` : ''}
           ${voice?.reference_asset?.id ? `<button class="secondary" data-dh-preview-audio="${voice.reference_asset.id}">试听声音</button>` : ''}
+          ${voice?.reference_asset?.id && ['owner','admin'].includes(me.workspace.role) ? `<button class="secondary" data-dh-review-transcript="${item.id}">核对 / 修正逐字稿</button>` : ''}
           <button class="secondary" data-dh-edit="${item.id}">编辑</button>
           ${['owner','admin'].includes(me.workspace.role) ? `<button class="danger" data-dh-delete="${item.id}">删除</button>` : ''}
         </div>
@@ -73,7 +88,7 @@ JS = r'''
       <div class="toolbar"><div><h2 style="margin-bottom:4px">数字人资产</h2><div class="muted">一个数字人包含人物形象、母版视频、默认克隆声音和授权记录。</div></div><button class="primary" id="newDigitalHuman">+ 创建数字人</button></div>
       <div class="muted">普通用户不需要先去“素材中心”分别上传人物、视频和声音；创建流程会自动完成素材入库和绑定。</div>
     </div>
-    ${items.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">${items.map(dhCard).join('')}</div>` : '<div class="empty">还没有数字人。点击“创建数字人”，一次完成头像、母版视频和克隆声音配置。</div>'}`;
+    ${items.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px">${items.map(dhCard).join('')}</div>` : '<div class="empty">还没有数字人。点击“创建数字人”，一次完成头像、母版视频和克隆声音配置。</div>'}`;
     document.getElementById('newDigitalHuman')?.addEventListener('click', () => digitalHumanModal());
     document.querySelectorAll('[data-dh-edit]').forEach(b => b.addEventListener('click', () => digitalHumanModal(items.find(x => x.id === b.dataset.dhEdit))));
     document.querySelectorAll('[data-dh-delete]').forEach(b => b.addEventListener('click', async () => {
@@ -82,6 +97,7 @@ JS = r'''
     }));
     document.querySelectorAll('[data-dh-preview-audio]').forEach(b => b.addEventListener('click', () => previewRemoteMedia(b.dataset.dhPreviewAudio, 'audio')));
     document.querySelectorAll('[data-dh-preview-video]').forEach(b => b.addEventListener('click', () => previewRemoteMedia(b.dataset.dhPreviewVideo, 'video')));
+    document.querySelectorAll('[data-dh-review-transcript]').forEach(b => b.addEventListener('click', () => reviewVoiceTranscript(items.find(x => x.id === b.dataset.dhReviewTranscript))));
     hydrateDigitalHumanPreviews();
   };
 
@@ -94,6 +110,33 @@ JS = r'''
     } catch (e) { toast(e.message); }
   }
 
+  async function reviewVoiceTranscript(item) {
+    const voice = item?.voice;
+    const audioId = voice?.reference_asset?.id;
+    if (!voice || !audioId) return toast('这个数字人没有可核对的参考录音');
+    try {
+      const url = await dhBlobUrl(audioId);
+      openModal(`<div class="modal-head"><div><h2>核对参考录音逐字稿</h2><div class="muted">${dhEsc(item.name)} · ${dhEsc(voice.name)}</div></div><button class="iconbtn" data-close>×</button></div>
+        <div style="margin:14px 0;padding:12px;border:1px solid #664b29;border-radius:11px;background:#21180d;color:#f5d49c;line-height:1.7">请播放参考录音，逐字核对下方文字。哪怕只有“我/我们”、词序或漏字不同，也应修正；不要根据意思概括。</div>
+        <audio src="${url}" controls style="width:100%;margin:2px 0 12px"></audio>
+        <form id="dhTranscriptReviewForm">
+          <div class="field"><label>参考录音实际逐字稿</label><textarea id="dhTranscriptReviewText" required style="min-height:150px;line-height:1.8">${dhEsc(voice.transcript || '')}</textarea><div class="muted">保存后，新提交或尚未开始语音合成的任务会使用这份逐字稿；已生成的成片需要重新生成。</div></div>
+          <button class="primary wide">确认核对并保存</button>
+        </form>`);
+      $('modalRoot').querySelector('[data-close]')?.addEventListener('click', closeModal);
+      $('dhTranscriptReviewForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const transcript = $('dhTranscriptReviewText').value.trim();
+        if (!transcript) return toast('逐字稿不能为空');
+        await api('/voices/' + voice.id, {method:'PATCH', body:{transcript, transcript_verified:true}});
+        await loadLookups();
+        closeModal();
+        toast('逐字稿已更新');
+        renderAvatars();
+      });
+    } catch (e) { toast(e.message); }
+  }
+
   function voiceOptions(selected) {
     return '<option value="">— 请选择已有声音 —</option>' + (cache.voices || []).map(v => `<option value="${v.id}" ${v.id===selected?'selected':''}>${dhEsc(v.name)}</option>`).join('');
   }
@@ -101,7 +144,8 @@ JS = r'''
   function digitalHumanModal(item=null) {
     dhState.recordingFile = null;
     const editing = !!item;
-    const defaultText = item?.voice?.transcript || '大家好，欢迎来到今天的课程。接下来我会用清晰自然的方式，为大家介绍本次学习的主要内容。';
+    const recordingPrompt = '大家好，欢迎来到今天的课程，很高兴和大家一起学习。';
+    const recordText = recordingPrompt;
     openModal(`<div class="modal-head"><div><h2>${editing ? '编辑数字人' : '创建数字人'}</h2><div class="muted">人物、母版视频和声音在这里一次完成</div></div><button class="iconbtn" data-close>×</button></div>
       <form id="digitalHumanForm" data-id="${item?.id || ''}">
         <div class="field"><label>数字人名称</label><input id="dhName" value="${dhEsc(item?.name || '')}" required placeholder="例如：丹哥讲师"></div>
@@ -113,16 +157,17 @@ JS = r'''
           <option value="existing" ${editing ? 'selected' : ''}>使用已有声音</option>
         </select></div>
         <div id="dhRecordBlock">
-          <div class="field"><label>请朗读下面这段文字</label><textarea id="dhTranscript">${dhEsc(defaultText)}</textarea></div>
-          <div class="actions"><button type="button" class="primary" id="dhStartRecord">● 开始录音</button><button type="button" class="secondary" id="dhStopRecord" disabled>■ 停止</button><span class="muted" id="dhRecordStatus">建议录制 10–20 秒</span></div>
+          <div class="field"><label>固定逐字稿（录音必须一字不差）</label><textarea id="dhTranscript">${dhEsc(recordText)}</textarea><div style="margin-top:8px;padding:10px 12px;border-radius:9px;background:#21180d;border:1px solid #5e4729;color:#f2d29d">请照着上方文字朗读，不要增字、漏字、换词或调整语序。录错时请重新录制，不要修改逐字稿去迁就录音。</div></div>
+          <div class="actions"><button type="button" class="primary" id="dhStartRecord">● 开始录音</button><button type="button" class="secondary" id="dhStopRecord" disabled>■ 停止</button><span class="muted" id="dhRecordStatus">建议录制 5–10 秒</span></div>
           <audio id="dhRecordedAudio" controls class="hidden" style="width:100%;margin-top:12px"></audio>
         </div>
         <div id="dhUploadVoiceBlock" class="hidden">
-          <div class="field"><label>参考录音</label><input id="dhVoiceFile" type="file" accept="audio/*,.m4a,.wav,.mp3,.aac,.flac,.webm"></div>
-          <div class="field"><label>参考录音逐字稿</label><textarea id="dhUploadTranscript">${dhEsc(defaultText)}</textarea><div class="muted">文字应与录音内容尽量逐字一致。</div></div>
+          <div class="field"><label>步骤 1 · 上传参考录音</label><input id="dhVoiceFile" type="file" accept="audio/*,.m4a,.wav,.mp3,.aac,.flac,.webm"><div id="dhUploadAudioPreview" style="margin-top:10px"></div></div>
+          <div class="field"><label>步骤 2 · 播放录音并填写实际逐字稿</label><textarea id="dhUploadTranscript" required placeholder="请逐字填写录音中实际说出的完整文字，不要填写准备稿或内容摘要"></textarea><div style="margin-top:8px;padding:10px 12px;border-radius:9px;background:#21180d;border:1px solid #5e4729;color:#f2d29d">必须边播放边核对，确保每个字和语序都一致。示例文字、近似内容和漏字都会导致合成语音错乱。</div></div>
         </div>
         <div id="dhExistingVoiceBlock" class="hidden">
           <div class="field"><label>已有声音</label><select id="dhExistingVoice">${voiceOptions(item?.voice_profile_id || '')}</select></div>
+          <div id="dhExistingTranscript"></div>
         </div>
         <div class="field"><label>人物备注 / 提示词（可选）</label><textarea id="dhPrompt">${dhEsc(item?.prompt || '')}</textarea></div>
         <label class="check"><input id="dhPortraitConsent" type="checkbox" ${editing ? '' : 'required'}><span>我确认已取得该人物肖像和母版视频用于数字人合成的合法授权。</span></label>
@@ -134,6 +179,8 @@ JS = r'''
     $('dhVoiceMode').addEventListener('change', syncVoiceMode);
     $('dhImage').addEventListener('change', () => localFilePreview($('dhImage').files[0], 'image', $('dhImagePreview')));
     $('dhVideo').addEventListener('change', () => localFilePreview($('dhVideo').files[0], 'video', $('dhVideoPreview')));
+    $('dhVoiceFile').addEventListener('change', () => localFilePreview($('dhVoiceFile').files[0], 'audio', $('dhUploadAudioPreview')));
+    $('dhExistingVoice').addEventListener('change', syncExistingVoiceTranscript);
     $('dhStartRecord').addEventListener('click', startRecording);
     $('dhStopRecord').addEventListener('click', stopRecording);
     $('digitalHumanForm').addEventListener('submit', submitDigitalHuman);
@@ -147,7 +194,16 @@ JS = r'''
     dhState.previewUrls.push(url);
     host.innerHTML = type === 'image'
       ? `<img src="${url}" style="max-width:180px;max-height:150px;object-fit:cover;border-radius:10px">`
-      : `<video src="${url}" controls style="width:100%;max-height:260px;background:#000;border-radius:10px"></video>`;
+      : type === 'audio'
+        ? `<audio src="${url}" controls style="width:100%"></audio>`
+        : `<video src="${url}" controls style="width:100%;max-height:260px;background:#000;border-radius:10px"></video>`;
+  }
+
+  function syncExistingVoiceTranscript() {
+    const host = $('dhExistingTranscript');
+    if (!host) return;
+    const voice = (cache.voices || []).find(v => v.id === $('dhExistingVoice')?.value);
+    host.innerHTML = voice ? dhTranscriptPanel(voice) : '<div class="muted">选择声音后，这里会显示该参考录音的完整逐字稿。</div>';
   }
 
   function syncVoiceMode() {
@@ -156,6 +212,7 @@ JS = r'''
     $('dhUploadVoiceBlock').classList.toggle('hidden', mode !== 'upload');
     $('dhExistingVoiceBlock').classList.toggle('hidden', mode !== 'existing');
     $('dhVoiceConsentRow').classList.toggle('hidden', mode === 'existing');
+    if (mode === 'existing') syncExistingVoiceTranscript();
   }
 
   async function startRecording() {

@@ -56,6 +56,20 @@ def test_integrated_digital_human_creation_and_readiness() -> None:
         assert item["voice"]["transcript"] == "大家好，欢迎来到今天的课程。"
         assert item["readiness"]["musetalk_ready"] is True
 
+        updated_transcript = "大家好，欢迎来到今天的课程，很高兴和大家一起学习。"
+        voice_update = client.patch(
+            f"/api/saas/voices/{item['voice']['id']}",
+            headers=_headers(token),
+            json={"transcript": updated_transcript, "transcript_verified": True},
+        )
+        assert voice_update.status_code == 200, voice_update.text
+        assert voice_update.json()["transcript"] == updated_transcript
+        assert voice_update.json()["settings"]["transcript_verified"] is True
+
+        refreshed = client.get(f"/api/saas/digital-humans/{item['id']}", headers=_headers(token))
+        assert refreshed.status_code == 200
+        assert refreshed.json()["voice"]["transcript"] == updated_transcript
+
         listing = client.get("/api/saas/digital-humans", headers=_headers(token))
         assert listing.status_code == 200
         assert any(row["id"] == item["id"] for row in listing.json())
@@ -130,3 +144,11 @@ def test_saas_shell_loads_integrated_avatar_ui() -> None:
         assert "MediaRecorder" in script.text
         assert "/digital-humans" in script.text
         assert "现场录制克隆声音" in script.text
+        assert 'id="dhUploadTranscript"' in script.text
+        assert 'placeholder="请逐字填写录音中实际说出的完整文字' in script.text
+        assert 'id="dhUploadTranscript">大家好' not in script.text
+        assert "必须边播放边核对" in script.text
+        assert "参考录音逐字稿" in script.text
+        assert "核对 / 修正逐字稿" in script.text
+        assert "步骤 2 · 播放录音并填写实际逐字稿" in script.text
+        assert "method:'PATCH'" in script.text

@@ -12,11 +12,6 @@ def preprocess_text(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r"[—–]{1,2}\s*(?=\n|$)", "：", cleaned)
     cleaned = re.sub(r"\s+([，。！？；：、])", r"\1", cleaned)
-    cleaned = re.sub(
-        r"变\s*[、,，]\s*影\s*[、,，]\s*痛\s*[、,，]\s*值\s*[、,，]\s*证",
-        "变化的变，影响的影，痛点的痛，价值的值，验证的证",
-        cleaned,
-    )
     return cleaned.strip()
 
 
