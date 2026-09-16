@@ -71,7 +71,7 @@ def test_account_profile_and_password_change() -> None:
         assert new_login.status_code == 200
 
 
-def test_ppt_outline_parser_for_course_studio() -> None:
+def test_ppt_outline_parser_and_thumbnail_for_course_studio() -> None:
     with TestClient(app) as client:
         token, _, _ = _register(client, "course-tools")
         headers = _headers(token)
@@ -96,21 +96,34 @@ def test_ppt_outline_parser_for_course_studio() -> None:
         assert data["total_slides"] == 1
         assert data["slides"][0]["title"] == "第一章：市场变化"
         assert "持续经营" in data["slides"][0]["narration"]
+        assert data["slides"][0]["thumbnail_url"].endswith("/slides/1/thumbnail")
+
+        thumbnail = client.get(data["slides"][0]["thumbnail_url"], headers=headers)
+        assert thumbnail.status_code == 200, thumbnail.text
+        assert thumbnail.headers["content-type"].startswith("image/png")
+        assert len(thumbnail.content) > 100
 
 
-def test_theme_and_product_ui_assets_are_served() -> None:
+def test_theme_and_course_studio_assets_are_served() -> None:
     with TestClient(app) as client:
         css = client.get("/saas-theme.css")
+        studio_css = client.get("/course-studio.css")
         product_js = client.get("/product-ui.js")
         polish_js = client.get("/polish-ui.js")
+        studio_js = client.get("/course-studio.js")
         page = client.get("/")
         assert css.status_code == 200
         assert "tech-hero" in css.text
+        assert studio_css.status_code == 200
+        assert "course-studio-shell" in studio_css.text
         assert product_js.status_code == 200
         assert "COURSE STUDIO" in product_js.text
         assert polish_js.status_code == 200
         assert "运营附加数据" in polish_js.text
+        assert studio_js.status_code == 200
+        assert "SCRIPT REVIEW" in studio_js.text
+        assert "LAYOUT STUDIO" in studio_js.text
         assert page.status_code == 200
         assert "/saas-theme.css" in page.text
-        assert "/product-ui.js" in page.text
-        assert "/polish-ui.js" in page.text
+        assert "/course-studio.css" in page.text
+        assert "/course-studio.js" in page.text
