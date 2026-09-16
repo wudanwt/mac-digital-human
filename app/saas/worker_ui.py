@@ -36,9 +36,20 @@ JS = r'''
         }
       }
     }catch(_){
-      // Keep the studio usable if status lookup itself fails.
+      // Status is advisory. A temporary lookup failure must not break the studio.
     }finally{checking=false}
   }
+
+  document.addEventListener('click',event=>{
+    const button=event.target.closest?.('#studioProduce');
+    if(!button)return;
+    const chosen=document.querySelector('input[name="studioEngine"]:checked');
+    if(!chosen||chosen.disabled){
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if(typeof toast==='function')toast('请先启动一个可用的生成 Worker');
+    }
+  },true);
 
   const observer=new MutationObserver(()=>{
     if(document.querySelector('input[name="studioEngine"]'))setTimeout(patchWorkerOptions,0);
