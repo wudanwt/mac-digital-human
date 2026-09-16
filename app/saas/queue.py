@@ -28,6 +28,21 @@ def _priority(job: RenderJob) -> int:
         return 0
 
 
+def normalize_engine(engine: str | None) -> str:
+    value = (engine or "mock").strip().lower()
+    if value in {"local", "mlx", "mlx-local", "musetalk"}:
+        return "musetalk"
+    if value in {"mock", "fake"}:
+        return "mock"
+    if value in {"cuda", "cuda-musetalk"}:
+        return "cuda-musetalk"
+    return value.replace(":", "-") or "mock"
+
+
+def queue_name_for_engine(engine: str) -> str:
+    return f"{saas_settings.queue_name}:{normalize_engine(engine)}"
+
+
 class InMemoryJobQueue:
     """Development fallback with the same cancellation/ack contract as Redis."""
 
@@ -181,7 +196,6 @@ class RedisJobQueue:
         pipe = self.client.pipeline(transaction=True)
         for key in self.pending_keys:
             pipe.lrem(key, 0, job_id)
-        # If it was claimed but has not started yet, the worker will also verify DB state before rendering.
         pipe.lrem(self.processing_key, 0, job_id)
         pipe.hdel(self.processing_started_key, job_id)
         pipe.execute()
@@ -221,12 +235,72 @@ class RedisJobQueue:
         return recovered
 
 
-def build_job_queue() -> JobQueue:
+class EngineRoutingJobQueue:
+    """Control-plane queue facade that routes each render job to an engine-specific queue."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, JobQueue] = {}
+
+    def _queue(self, engine: str) -> JobQueue:
+        engine = normalize_engine(engine)
+        if engine not in self._queues:
+            self._queues[engine] = build_job_queue(engine=engine)
+        return self._queues[engine]
+
+    def enqueue(self, job: RenderJob) -> RenderJob:
+        return self._queue(job.engine).enqueue(job)
+
+    def get(self, job_id: str) -> RenderJob | None:
+        for engine in ("mock", "musetalk", "cuda-musetalk"):
+            item = self._queue(engine).get(job_id)
+            if item is not None:
+                return item
+        return None
+
+    def save(self, job: RenderJob) -> RenderJob:
+        return self._queue(job.engine).save(job)
+
+    def pop(self, timeout_seconds: int = 5) -> RenderJob | None:
+        deadline = time.monotonic() + max(0, timeout_seconds)
+        while True:
+            for engine in ("mock", "musetalk", "cuda-musetalk"):
+                item = self._queue(engine).pop(timeout_seconds=0)
+                if item is not None:
+                    return item
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.05)
+
+    def cancel(self, job_id: str) -> bool:
+        canceled = False
+        for engine in ("mock", "musetalk", "cuda-musetalk"):
+            canceled = self._queue(engine).cancel(job_id) or canceled
+        return canceled
+
+    def ack(self, job_id: str) -> None:
+        for engine in ("mock", "musetalk", "cuda-musetalk"):
+            self._queue(engine).ack(job_id)
+
+    def heartbeat(self, job_id: str) -> None:
+        for engine in ("mock", "musetalk", "cuda-musetalk"):
+            self._queue(engine).heartbeat(job_id)
+
+    def recover_stale(self) -> int:
+        return sum(self._queue(engine).recover_stale() for engine in ("mock", "musetalk", "cuda-musetalk"))
+
+
+def _single_queue(engine: str) -> JobQueue:
     if saas_settings.worker_backend == "redis":
-        return RedisJobQueue(saas_settings.redis_url, saas_settings.queue_name)
+        return RedisJobQueue(saas_settings.redis_url, queue_name_for_engine(engine))
     if saas_settings.is_production and not saas_settings.allow_local_fallback:
         raise RuntimeError("Production SaaS requires WORKER_BACKEND=redis")
     return InMemoryJobQueue()
+
+
+def build_job_queue(engine: str | None = None) -> JobQueue:
+    if engine is not None:
+        return _single_queue(normalize_engine(engine))
+    return EngineRoutingJobQueue()
 
 
 job_queue = build_job_queue()
