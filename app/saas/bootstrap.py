@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from .background_themes import ensure_builtin_backgrounds
 from .database import SessionLocal, create_all
 from .models import Plan, User
 from .settings import saas_settings
@@ -44,6 +45,7 @@ def sync_superusers() -> None:
 
 def initialize() -> None:
     saas_settings.validate_production()
+    ensure_builtin_backgrounds()
     if not saas_settings.is_production:
         saas_settings.storage_local_root.mkdir(parents=True, exist_ok=True)
         # SQLite remains convenient for direct local Python development. PostgreSQL,
