@@ -18,6 +18,35 @@ ProgressFn = Callable[[int, str], None]
 log = logging.getLogger("digital-human.saas.avatar-matting-engine")
 
 
+def is_green_screen(rgb) -> bool:
+    import numpy as np
+
+    height, width = rgb.shape[:2]
+    border = max(1, min(height, width) // 16)
+    samples = np.concatenate(
+        [rgb[:border].reshape(-1, 3), rgb[:, :border].reshape(-1, 3), rgb[:, -border:].reshape(-1, 3)],
+        axis=0,
+    ).astype(np.int16)
+    green = samples[:, 1]
+    return bool(np.mean((green > 120) & (green - np.maximum(samples[:, 0], samples[:, 2]) > 65)) > 0.8)
+
+
+def despill_green(rgb, alpha):
+    import cv2
+    import numpy as np
+
+    output = rgb.copy()
+    red = rgb[:, :, 0].astype(np.float32)
+    green = rgb[:, :, 1].astype(np.float32)
+    blue = rgb[:, :, 2].astype(np.float32)
+    other = np.maximum(red, blue)
+    excess = np.maximum(0.0, green - other - 4.0)
+    edge = cv2.dilate((alpha < 250).astype(np.uint8), np.ones((5, 5), np.uint8))
+    strong_spill = (green - other > 40.0) & (green > other * 1.35) & (green > 55.0)
+    output[:, :, 1] = np.clip(green - excess * (edge | strong_spill), 0, 255).astype(np.uint8)
+    return output
+
+
 class _OnnxMattingSession:
     name = "onnx-cpu"
 
@@ -189,6 +218,7 @@ class MattingResult:
     backend: str
     foreground_recovery: bool
     foreground_recovered_ratio: float
+    green_screen: bool
     elapsed_seconds: float
 
 
@@ -382,6 +412,7 @@ class PortraitMattingEngine:
 
         previous: np.ndarray | None = None
         foreground_recovery: _SceneForegroundRecovery | None = None
+        green_screen: bool | None = None
         frame_count = 0
         poster_written = False
         try:
@@ -390,6 +421,8 @@ class PortraitMattingEngine:
                 if not ok:
                     break
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                if green_screen is None:
+                    green_screen = is_green_screen(rgb)
                 raw_mask = session.predict(rgb)
                 mask = self._decode_mask(raw_mask, width, height)
                 if foreground_recovery is None and self.preserve_scene_foreground:
@@ -416,6 +449,8 @@ class PortraitMattingEngine:
                 previous = mask.copy()
 
                 alpha_proc.stdin.write(mask.tobytes())
+                if green_screen:
+                    frame = cv2.cvtColor(despill_green(rgb, mask), cv2.COLOR_RGB2BGR)
                 alpha_f = mask.astype(np.float32)[:, :, None] / 255.0
                 white = np.clip(frame.astype(np.float32) * alpha_f + 255.0 * (1.0 - alpha_f), 0, 255).astype(np.uint8)
                 white_proc.stdin.write(white.tobytes())
@@ -466,5 +501,6 @@ class PortraitMattingEngine:
             backend=session.name,
             foreground_recovery=bool(foreground_recovery and foreground_recovery.enabled),
             foreground_recovered_ratio=foreground_recovery.recovered_ratio if foreground_recovery else 0.0,
+            green_screen=bool(green_screen),
             elapsed_seconds=time.time() - started,
         )

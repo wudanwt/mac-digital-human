@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..composer import ComposeError, CourseComposer, media_duration
 from ..config import settings
+from .avatar_matting_engine import is_green_screen
 
 
 class TransparentCourseComposer(CourseComposer):
@@ -31,6 +32,17 @@ class TransparentCourseComposer(CourseComposer):
         x = max(0, min(width - w, x))
         y = max(0, min(height - h, y))
         return x, y, w, h
+
+    @staticmethod
+    def _needs_green_despill(video: Path) -> bool:
+        import cv2
+
+        cap = cv2.VideoCapture(str(video))
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+        return bool(ok and is_green_screen(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
 
     def compose_segment_layout(
         self,
@@ -68,6 +80,9 @@ class TransparentCourseComposer(CourseComposer):
             raise ComposeError(f"avatar mode {mode} requires a prepared alpha asset")
         if not avatar_video.exists():
             raise ComposeError(f"avatar video not found: {avatar_video}")
+        rgb_filter = "format=rgb24"
+        if self._needs_green_despill(avatar_video):
+            rgb_filter += ",despill=type=green:mix=0.5:green=-1,format=rgb24"
 
         cfg = self.config
         duration = media_duration(audio)
@@ -108,7 +123,7 @@ class TransparentCourseComposer(CourseComposer):
                 bg = f"color=c=0x0a0f1d:s={cfg.width}x{cfg.height}:d={duration:.3f},fps={cfg.fps}[bg];"
             graph = (
                 bg
-                + f"[0:v]fps={cfg.fps},format=rgb24[rgb];[2:v]fps={cfg.fps},format=gray[mask];"
+                + f"[0:v]fps={cfg.fps},{rgb_filter}[rgb];[2:v]fps={cfg.fps},format=gray[mask];"
                 + "[rgb][mask]alphamerge,format=rgba[cut0];"
                 + f"[cut0]scale={aw}:{ah}:force_original_aspect_ratio=decrease,format=rgba,"
                   f"pad={aw}:{ah}:(ow-iw)/2:oh-ih:color=0x00000000[cut];"
@@ -175,7 +190,7 @@ class TransparentCourseComposer(CourseComposer):
             f"[bg][ppt]overlay=x={px}:y={py}[slide];"
         )
         cut_filter = (
-            f"[1:v]fps={cfg.fps},format=rgb24[rgb];[3:v]fps={cfg.fps},format=gray[mask];"
+            f"[1:v]fps={cfg.fps},{rgb_filter}[rgb];[3:v]fps={cfg.fps},format=gray[mask];"
             "[rgb][mask]alphamerge,format=rgba[cut0];"
             f"[cut0]scale={aw}:{ah}:force_original_aspect_ratio=decrease,format=rgba,"
             f"pad={aw}:{ah}:(ow-iw)/2:oh-ih:color=0x00000000[cut];"
