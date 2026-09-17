@@ -44,6 +44,24 @@ def test_cosyvoice_pronunciation_replacements_are_tts_only():
     assert source == "今天优优认识了谁？"
 
 
+def test_cosyvoice_pronunciation_replacements_apply_to_every_occurrence():
+    source = (
+        "Hello, everyone! Welcome to Youyou Story Time. Today, we are going to visit a very special "
+        "place—the Garden Market. Youyou and her friends will learn new English words, ask questions, "
+        "count vegetables, and help each other. Are you ready? Let’s begin our story!"
+    )
+    expected = (
+        "Hello, everyone! Welcome to Yoyo Story Time. Today, we are going to visit a very special "
+        "place—the Garden Market. Yoyo and her friends will learn new English words, ask questions, "
+        "count vegetables, and help each other. Are you ready? Let’s begin our story!"
+    )
+    result = apply_pronunciation_replacements(source, {"Youyou": "Yoyo"})
+    assert result == expected
+    assert result.count("Yoyo") == 2
+    assert "Youyou" not in result
+    assert source.count("Youyou") == 2
+
+
 def test_cosyvoice_registry_accepts_pronunciation_replacements():
     provider = create_tts(
         {
