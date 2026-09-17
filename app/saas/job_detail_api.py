@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -181,7 +182,7 @@ def cancel_job_with_distributed_support(
     if item.status not in {"queued", "running"}:
         raise HTTPException(status_code=409, detail="Only queued or running jobs can be canceled")
 
-    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    now = datetime.now(timezone.utc)
     subtasks = db.scalars(
         select(RenderSubtask)
         .where(RenderSubtask.parent_job_id == item.id)
