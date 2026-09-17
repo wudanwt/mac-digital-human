@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from ..engines import MuseTalkMLXEngine
 from ..tts.cosyvoice import CosyVoiceTTS
+from .avatar_matting_engine import PortraitMattingEngine
 from .database import engine
 from .settings import saas_settings
 from .storage import object_store
@@ -57,6 +58,11 @@ def collect() -> dict:
     except Exception as exc:
         checks["cosyvoice"] = {"ready": False, "error": str(exc)}
 
+    try:
+        checks["portrait_matting"] = PortraitMattingEngine.readiness()
+    except Exception as exc:
+        checks["portrait_matting"] = {"ready": False, "error": str(exc)}
+
     ready = bool(
         checks["platform"]["apple_silicon"]
         and checks["ffmpeg"]
@@ -68,6 +74,8 @@ def collect() -> dict:
         and checks["musetalk"].get("ready") is True
         and isinstance(checks["cosyvoice"], dict)
         and checks["cosyvoice"].get("ready") is True
+        and isinstance(checks["portrait_matting"], dict)
+        and checks["portrait_matting"].get("ready") is True
     )
     return {"ready": ready, "checks": checks}
 
