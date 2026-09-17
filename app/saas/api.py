@@ -8,6 +8,7 @@ from .admin_api import router as admin_router
 from .assets_api import router as assets_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
+from .avatar_matting_api import router as avatar_matting_router
 from .backgrounds_api import router as backgrounds_router
 from .billing_api import router as billing_router
 from .compliance_api import admin_router as admin_compliance_router
@@ -83,6 +84,9 @@ def capabilities() -> dict:
         "digital_human_assets": True,
         "digital_human_direct_upload": True,
         "browser_voice_recording": True,
+        "avatar_transparent_assets": True,
+        "avatar_white_preview": True,
+        "course_avatar_modes": ["transparent", "white", "original"],
         "avatars": True,
         "voice_profiles": True,
         "courses": True,
@@ -114,6 +118,7 @@ for child in (
     workspace_router,
     assets_router,
     digital_human_router,
+    avatar_matting_router,
     voice_router,
     avatar_router,
     course_router,
