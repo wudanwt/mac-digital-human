@@ -57,6 +57,7 @@ matting = [
 dev = [
   "pytest>=8",
   "httpx>=0.27",
+  "numpy>=1.26",
 ]
 
 [project.scripts]
