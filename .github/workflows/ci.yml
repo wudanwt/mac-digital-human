@@ -57,27 +57,35 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.saas.avatar_ui import JS as avatar_js
+          from app.saas.avatar_matting_ui import JS as avatar_matting_js
           from app.saas.product_ui import JS as product_js
           from app.saas.polish_ui import JS as polish_js
           from app.saas.interaction_patch import JS as interaction_js
           from app.saas.course_studio_ui import JS as course_studio_js
           from app.saas.course_studio_upgrade import JS as course_studio_upgrade_js
+          from app.saas.course_studio_asset_picker_ui import JS as course_studio_asset_picker_js
+          from app.saas.course_avatar_mode_ui import JS as course_avatar_mode_js
+          from app.saas.course_voice_ui import JS as course_voice_js
           from app.saas.worker_ui import JS as worker_ui_js
-          Path('/tmp/avatar-ui.js').write_text(avatar_js, encoding='utf-8')
-          Path('/tmp/product-ui.js').write_text(product_js, encoding='utf-8')
-          Path('/tmp/polish-ui.js').write_text(polish_js, encoding='utf-8')
-          Path('/tmp/interaction-patch.js').write_text(interaction_js, encoding='utf-8')
-          Path('/tmp/course-studio.js').write_text(course_studio_js, encoding='utf-8')
-          Path('/tmp/course-studio-upgrade.js').write_text(course_studio_upgrade_js, encoding='utf-8')
-          Path('/tmp/worker-ui.js').write_text(worker_ui_js, encoding='utf-8')
+          modules = {
+              'avatar-ui': avatar_js,
+              'avatar-matting': avatar_matting_js,
+              'product-ui': product_js,
+              'polish-ui': polish_js,
+              'interaction-patch': interaction_js,
+              'course-studio': course_studio_js,
+              'course-studio-upgrade': course_studio_upgrade_js,
+              'course-studio-asset-picker': course_studio_asset_picker_js,
+              'course-avatar-mode': course_avatar_mode_js,
+              'course-voice': course_voice_js,
+              'worker-ui': worker_ui_js,
+          }
+          for name, source in modules.items():
+              Path(f'/tmp/{name}.js').write_text(source, encoding='utf-8')
           PY
-          node --check /tmp/avatar-ui.js
-          node --check /tmp/product-ui.js
-          node --check /tmp/polish-ui.js
-          node --check /tmp/interaction-patch.js
-          node --check /tmp/course-studio.js
-          node --check /tmp/course-studio-upgrade.js
-          node --check /tmp/worker-ui.js
+          for file in /tmp/avatar-ui.js /tmp/avatar-matting.js /tmp/product-ui.js /tmp/polish-ui.js /tmp/interaction-patch.js /tmp/course-studio.js /tmp/course-studio-upgrade.js /tmp/course-studio-asset-picker.js /tmp/course-avatar-mode.js /tmp/course-voice.js /tmp/worker-ui.js; do
+            node --check "$file"
+          done
       - name: Migration smoke test on PostgreSQL
         run: |
           alembic upgrade head
