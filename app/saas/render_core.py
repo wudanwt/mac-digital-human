@@ -34,6 +34,7 @@ class PageRenderPlan:
     narration: str
     layout: str
     override: dict[str, Any]
+    slide: Any
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ def build_page_plans(deck, script_entries: list[dict[str, Any]], settings_payloa
                 narration=narration,
                 layout=layout,
                 override=override,
+                slide=slide,
             )
         )
     return plans
