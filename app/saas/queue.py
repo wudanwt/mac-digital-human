@@ -43,6 +43,20 @@ def queue_name_for_engine(engine: str) -> str:
     return f"{saas_settings.queue_name}:{normalize_engine(engine)}"
 
 
+def is_distributed_page_parent(job: RenderJob) -> bool:
+    """Return whether a newly submitted parent is owned by PostgreSQL subtasks.
+
+    Only MuseTalk course renders are diverted. Mock jobs and every task submitted
+    before the feature flag is enabled continue through the legacy Redis queue.
+    """
+
+    return bool(
+        saas_settings.distributed_render_enabled
+        and normalize_engine(job.engine) == "musetalk"
+        and str(job.payload.get("job_type") or "") == "course_render"
+    )
+
+
 class InMemoryJobQueue:
     """Development fallback with the same cancellation/ack contract as Redis."""
 
@@ -248,6 +262,11 @@ class EngineRoutingJobQueue:
         return self._queues[engine]
 
     def enqueue(self, job: RenderJob) -> RenderJob:
+        if is_distributed_page_parent(job):
+            # The immutable snapshot + PostgreSQL subtask graph are already
+            # committed with the parent job. Do not dual-deliver this parent to
+            # the legacy whole-course Redis queue.
+            return job
         return self._queue(job.engine).enqueue(job)
 
     def get(self, job_id: str) -> RenderJob | None:
