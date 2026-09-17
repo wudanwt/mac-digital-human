@@ -50,6 +50,10 @@ saas = [
   "PyJWT>=2.9",
   "email-validator>=2.2",
 ]
+matting = [
+  "rembg[cpu]>=2.0.67,<3",
+  "opencv-python-headless>=4.10",
+]
 dev = [
   "pytest>=8",
   "httpx>=0.27",
