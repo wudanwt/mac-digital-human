@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from io import BytesIO
 from uuid import uuid4
@@ -43,9 +44,12 @@ def _upload(client: TestClient, token: str, name: str, kind: str, content: bytes
 def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None:
     with TestClient(app) as client:
         token = _register(client)
-        ppt = _upload(client, token, "snapshot.pptx", "ppt", b"snapshot-ppt")
-        master = _upload(client, token, "snapshot.mp4", "video", b"snapshot-video")
-        audio = _upload(client, token, "snapshot.wav", "audio", b"snapshot-audio")
+        ppt_bytes = b"snapshot-ppt"
+        master_bytes = b"snapshot-video"
+        audio_bytes = b"snapshot-audio"
+        ppt = _upload(client, token, "snapshot.pptx", "ppt", ppt_bytes)
+        master = _upload(client, token, "snapshot.mp4", "video", master_bytes)
+        audio = _upload(client, token, "snapshot.wav", "audio", audio_bytes)
 
         voice_response = client.post(
             "/api/saas/voices",
@@ -117,8 +121,8 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
             assert frozen["course"]["settings"] == original_settings
             assert frozen["voice"]["transcript"] == "参考音频逐字稿"
             assert frozen["voice"]["settings"] == {"pause_seconds": 0.22}
-            assert frozen["assets"][ppt["id"]]["sha256"] == ppt["sha256"]
-            assert frozen["assets"][master["id"]]["sha256"] == master["sha256"]
+            assert frozen["assets"][ppt["id"]]["sha256"] == hashlib.sha256(ppt_bytes).hexdigest()
+            assert frozen["assets"][master["id"]]["sha256"] == hashlib.sha256(master_bytes).hexdigest()
             first_hash = row.snapshot_hash
 
         changed = client.patch(
@@ -133,6 +137,7 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
 
         with SessionLocal() as db:
             row = db.get(RenderTaskSnapshot, job_id)
+            assert row is not None
             frozen = json.loads(row.snapshot_json)
             assert row.snapshot_hash == first_hash
             assert frozen["course"]["script"] == original_script
