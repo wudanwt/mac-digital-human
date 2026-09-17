@@ -10,7 +10,7 @@ CSS = r'''
 
 JS = r'''
 (() => {
-  const state={activeKey:'__new__',activeAvatar:null,modes:new Map(),matting:new Map(),urls:new Map(),loading:new Map(),patchedControls:null};
+  const state={activeKey:'__new__',activeAvatar:null,modes:new Map(),matting:new Map(),urls:new Map(),loading:new Map(),patchTimer:null};
   const nativeFetch=window.fetch.bind(window);
   const courseSave=/\/api\/saas\/courses(?:\/([^/?]+))?$/;
   const validModes=new Set(['original','transparent','white']);
@@ -19,7 +19,7 @@ JS = r'''
   function key(){return state.activeKey||'__new__'}
   function modeMap(){if(!state.modes.has(key()))state.modes.set(key(),new Map());return state.modes.get(key())}
   function slideIndex(){
-    const active=document.querySelector('[data-layout-slide].active');if(active?.dataset?.layoutSlide)return Number(active.dataset.layoutSlide)||1;
+    const active=document.querySelector('[data-layout-slide].active');if(active?.dataset?.layoutSlide!==undefined)return Number(active.dataset.layoutSlide)+1;
     const text=document.querySelector('#courseStudioPane .course-pane-head>.muted')?.textContent||'';const m=text.match(/第\s*(\d+)/);return Number(m?.[1]||1);
   }
   function totalSlides(){
@@ -71,7 +71,7 @@ JS = r'''
     const mode=currentMode(),avatarId=selectedAvatarId();layer.classList.remove('avatar-mode-transparent','avatar-mode-white','avatar-mode-matted');layer.querySelector('.studio-avatar-matte-overlay')?.remove();layer.querySelector('.avatar-mode-pill')?.remove();
     if(mode==='original'){return}
     const s=await matting(avatarId);if(!s?.transparent_ready||!s.poster_asset)return;
-    try{const url=await blob(s.poster_asset.download_url,'poster:'+avatarId+':'+s.source_asset_id);if(!document.body.contains(layer))return;const overlay=document.createElement('div');overlay.className='studio-avatar-matte-overlay';overlay.innerHTML=`<img src="${url}" alt="透明讲师">`;layer.appendChild(overlay);const pill=document.createElement('span');pill.className='avatar-mode-pill';pill.textContent=mode==='white'?'白底讲师':'透明讲师';layer.appendChild(pill);layer.classList.add('avatar-mode-matted',mode==='white'?'avatar-mode-white':'avatar-mode-transparent')}catch(_){}
+    try{const url=await blob(s.poster_asset.download_url,'poster:'+avatarId+':'+s.source_asset_id);if(!document.body.contains(layer)||selectedAvatarId()!==avatarId||currentMode()!==mode)return;const overlay=document.createElement('div');overlay.className='studio-avatar-matte-overlay';overlay.innerHTML=`<img src="${url}" alt="透明讲师">`;layer.appendChild(overlay);const pill=document.createElement('span');pill.className='avatar-mode-pill';pill.textContent=mode==='white'?'白底讲师':'透明讲师';layer.appendChild(pill);layer.classList.add('avatar-mode-matted',mode==='white'?'avatar-mode-white':'avatar-mode-transparent')}catch(_){}
   }
 
   async function choose(mode,all=false){
@@ -85,9 +85,10 @@ JS = r'''
   async function pollMatting(avatarId){for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,2200));const s=await matting(avatarId,true);if(!s)continue;await patchControls();if(s.status==='succeeded'){toast('透明讲师资产已就绪');await applyPreview();return}if(['failed','canceled'].includes(s.status)){toast(s.error||'透明资产处理失败');return}}}
 
   async function patchControls(){
-    const controls=document.querySelector('#courseStudioPane .layout-controls');if(!controls)return;const avatarId=selectedAvatarId(),s=await matting(avatarId),ready=Boolean(s?.transparent_ready),mode=currentMode();
+    const controls=document.querySelector('#courseStudioPane .layout-controls');if(!controls)return;const avatarId=selectedAvatarId(),courseKey=key(),slide=slideIndex(),s=await matting(avatarId);if(!document.body.contains(controls)||selectedAvatarId()!==avatarId||key()!==courseKey||slideIndex()!==slide)return;const ready=Boolean(s?.transparent_ready),mode=currentMode();
     let section=controls.querySelector('.avatar-mode-section');if(!section){section=document.createElement('section');section.className='layout-section avatar-mode-section';controls.prepend(section)}
     const status=ready?'透明资产已就绪':s?.status==='running'?`正在抠像 ${Number(s.progress||0)}%`:s?.status==='queued'?'等待抠像处理':s?.status==='failed'?'上次抠像失败':'尚未生成透明资产';
+    const renderKey=JSON.stringify([courseKey,avatarId,slide,mode,ready,s?.status||'',Number(s?.progress||0),s?.error||'']);if(section.dataset.avatarModeState===renderKey){await applyPreview();return}section.dataset.avatarModeState=renderKey;
     section.innerHTML=`<h3>讲师背景模式</h3><div class="avatar-mode-grid">
       <button type="button" class="avatar-mode-btn ${mode==='transparent'?'active':''}" data-avatar-mode="transparent" ${ready?'':'disabled'}><b>透明叠加</b><small>推荐</small></button>
       <button type="button" class="avatar-mode-btn ${mode==='white'?'active':''}" data-avatar-mode="white" ${ready?'':'disabled'}><b>纯白背景</b><small>独立白底</small></button>
@@ -95,13 +96,12 @@ JS = r'''
     </div><div class="avatar-mode-readiness ${ready?'ok':s?.status==='failed'?'bad':''}">${html(status)}${s?.error?` · ${html(s.error)}`:''}</div>
     ${!ready&&!['queued','running'].includes(s?.status)?'<button type="button" class="secondary avatar-mode-make">生成透明讲师资产</button>':''}
     <button type="button" class="secondary avatar-mode-apply">将当前模式应用到全部页面</button>`;
-    section.querySelectorAll('[data-avatar-mode]').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.avatarMode,false)));
-    section.querySelector('.avatar-mode-apply')?.addEventListener('click',()=>choose(currentMode(),true));section.querySelector('.avatar-mode-make')?.addEventListener('click',ensureMatting);
     await applyPreview();
   }
 
-  function schedulePatch(){setTimeout(()=>{patchControls();const select=document.getElementById('studioAvatarSelect');if(select&&!select.dataset.avatarModeBound){select.dataset.avatarModeBound='1';select.addEventListener('change',()=>{state.activeAvatar=select.value;patchControls()})}},80)}
-  const observer=new MutationObserver(()=>{if(document.querySelector('#courseStudioPane .layout-controls'))schedulePatch()});observer.observe(document.documentElement,{childList:true,subtree:true});
+  document.addEventListener('click',e=>{const target=e.target.closest?.('[data-avatar-mode],.avatar-mode-apply,.avatar-mode-make');if(!target||!target.closest('.avatar-mode-section')||target.disabled)return;e.preventDefault();e.stopPropagation();if(target.matches('[data-avatar-mode]'))choose(target.dataset.avatarMode,false);else if(target.matches('.avatar-mode-apply'))choose(currentMode(),true);else ensureMatting()},true);
+  function schedulePatch(){clearTimeout(state.patchTimer);state.patchTimer=setTimeout(()=>{state.patchTimer=null;patchControls();const select=document.getElementById('studioAvatarSelect');if(select&&!select.dataset.avatarModeBound){select.dataset.avatarModeBound='1';select.addEventListener('change',()=>{state.activeAvatar=select.value;state.matting.delete(select.value);patchControls()})}},80)}
+  const observer=new MutationObserver(records=>{if(records.some(r=>[...r.addedNodes].some(n=>n.nodeType===1&&(n.matches?.('#courseStudioPane .layout-controls')||n.querySelector?.('#courseStudioPane .layout-controls')))))schedulePatch()});observer.observe(document.documentElement,{childList:true,subtree:true});
 })();
 '''
 

@@ -15,6 +15,11 @@ def test_course_avatar_mode_ui_persists_and_previews_modes(tmp_path: Path) -> No
     assert "alph" not in JS.lower()  # browser preview consumes the cutout poster, not mask processing
     assert "/avatar-matting/" in JS
     assert "将当前模式应用到全部页面" in JS
+    assert "Number(active.dataset.layoutSlide)+1" in JS
+    assert "document.addEventListener('click'" in JS
+    assert "section.dataset.avatarModeState===renderKey" in JS
+    assert "r.addedNodes" in JS
+    assert "section.querySelectorAll('[data-avatar-mode]').forEach" not in JS
 
     node = shutil.which("node")
     if node:

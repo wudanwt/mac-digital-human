@@ -135,13 +135,24 @@ class _SceneForegroundRecovery:
 
         added = (support > 0) & (portrait_mask < 32)
         added_ratio = float(added.mean())
-        if not 0.008 <= added_ratio <= 0.35:
-            return
-        lower_fraction = float(added[int(height * 0.52):].sum() / max(1, added.sum()))
-        if lower_fraction < 0.58:
-            return
+        if 0.008 <= added_ratio <= 0.35:
+            lower_fraction = float(added[int(height * 0.52):].sum() / max(1, added.sum()))
+            if lower_fraction < 0.58:
+                return
+            recovered = color_alpha * support
+        else:
+            # A mostly correct portrait mask can still leave translucent holes in
+            # the desk edge. Keep this small correction below the presenter only.
+            lower = np.zeros_like(hard)
+            lower[int(height * 0.68):] = 1
+            soft_gap = (support > 0) & (lower > 0) & (color_alpha > 220) & (portrait_mask < 200)
+            soft_ratio = float(soft_gap.mean())
+            if not 0.0001 <= soft_ratio <= 0.02:
+                return
+            recovered = np.where((support > 0) & (lower > 0), color_alpha, 0)
+            added_ratio = soft_ratio
 
-        self._recovered_alpha = (color_alpha * support).astype(np.uint8)
+        self._recovered_alpha = recovered.astype(np.uint8)
         self._background = None
         self.recovered_ratio = added_ratio
         self.enabled = True
