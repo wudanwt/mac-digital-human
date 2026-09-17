@@ -1,6 +1,6 @@
 """distributed render control plane
 
-Revision ID: 0008_distributed_render_control_plane
+Revision ID: 0008_distributed_render
 Revises: 0007_render_task_snapshots
 Create Date: 2026-09-18
 """
@@ -8,7 +8,7 @@ Create Date: 2026-09-18
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0008_distributed_render_control_plane"
+revision = "0008_distributed_render"
 down_revision = "0007_render_task_snapshots"
 branch_labels = None
 depends_on = None
