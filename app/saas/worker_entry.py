@@ -21,6 +21,32 @@ from . import worker as base_worker
 
 
 _OriginalMLXHandler = base_worker.LocalMLXCourseHandler
+_OriginalCourseComposer = base_worker.CourseComposer
+
+
+def _align_avatar_filter_graph(value: str) -> str:
+    """Make final FFmpeg avatar placement match the studio preview.
+
+    The browser preview uses ``object-position: center bottom`` for the lecturer
+    inside the draggable PiP box.  The original FFmpeg graph padded the scaled
+    avatar with ``(oh-ih)/2`` which vertically centered it and made the rendered
+    lecturer appear higher than the preview.  Only the avatar filter is changed;
+    PPT centering remains untouched.
+    """
+    if "[avatar]" not in value or "[1:v]scale=" not in value:
+        return value
+    return value.replace(
+        ":(oh-ih)/2:color=black@0,fps=",
+        ":oh-ih:color=black@0,fps=",
+        1,
+    )
+
+
+class PreviewAlignedCourseComposer(_OriginalCourseComposer):
+    @staticmethod
+    def _run(cmd: list[str]) -> None:
+        patched = [_align_avatar_filter_graph(item) if isinstance(item, str) else item for item in cmd]
+        _OriginalCourseComposer._run(patched)
 
 
 class BackgroundAwareMLXCourseHandler(_OriginalMLXHandler):
@@ -104,6 +130,7 @@ def _start_worker_heartbeat(engine: str) -> None:
 def run_forever() -> None:
     ensure_builtin_backgrounds()
     base_worker.LocalMLXCourseHandler = BackgroundAwareMLXCourseHandler
+    base_worker.CourseComposer = PreviewAlignedCourseComposer
     engine = _renderer_engine()
     base_worker.job_queue = build_job_queue(engine=engine)
     _start_worker_heartbeat(engine)
