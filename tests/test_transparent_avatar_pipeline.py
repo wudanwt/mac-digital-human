@@ -12,6 +12,7 @@ from app.composer import ComposeConfig, media_duration
 from app.saas.avatar_alpha import AlphaCycleCache
 from app.saas.avatar_matting_ui import JS as avatar_matting_js
 from app.saas import avatar_matting_engine
+from app.saas import avatar_matting_worker
 from app.saas.avatar_matting_engine import PortraitMattingEngine, _SceneForegroundRecovery
 from app.saas.course_avatar_mode_ui import JS as course_avatar_mode_js
 from app.saas.transparent_composer import TransparentCourseComposer
@@ -53,6 +54,38 @@ def test_worker_requires_ready_alpha_for_transparent_or_white_modes() -> None:
     assert "white" in source
     assert "ready_matting_assets" in source
     assert "透明资产尚未处理完成" in source
+
+
+def test_stale_matting_recovery_marks_interrupted_jobs_retryable(monkeypatch) -> None:
+    class Result:
+        rowcount = 1
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.statement = None
+            self.committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, statement):
+            self.statement = statement
+            return Result()
+
+        def commit(self) -> None:
+            self.committed = True
+
+    session = FakeSession()
+    monkeypatch.setattr(avatar_matting_worker, "SessionLocal", lambda: session)
+
+    assert avatar_matting_worker.recover_stale_avatar_matting(stale_after_minutes=10) == 1
+    assert session.committed is True
+    params = session.statement.compile().params
+    assert "failed" in params.values()
+    assert "interrupted" in params.values()
 
 
 def test_matting_auto_backend_prefers_mps(monkeypatch, tmp_path) -> None:

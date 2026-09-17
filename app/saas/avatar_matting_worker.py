@@ -3,11 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..config import settings
 from .avatar_matting_engine import PortraitMattingEngine
@@ -31,6 +31,29 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def recover_stale_avatar_matting(*, stale_after_minutes: int = 10) -> int:
+    """Release jobs left running after a Mac Worker exit or restart."""
+    now = _now()
+    cutoff = now - timedelta(minutes=stale_after_minutes)
+    with SessionLocal() as db:
+        result = db.execute(
+            update(AvatarMattingJob)
+            .where(
+                AvatarMattingJob.status == "running",
+                AvatarMattingJob.updated_at < cutoff,
+            )
+            .values(
+                status="failed",
+                stage="interrupted",
+                error="Mac Worker 重启或退出导致任务中断，请重新生成透明资产。",
+                completed_at=now,
+                updated_at=now,
+            )
+        )
+        db.commit()
+        return int(result.rowcount or 0)
 
 
 def _claim_job() -> str | None:

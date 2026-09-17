@@ -23,6 +23,7 @@ from .models import Asset, Avatar, Course, RenderJobRecord, VoiceProfile
 from .queue import job_queue
 from .services import enforce_storage_limit, reconcile_render_seconds, refund_render_seconds
 from .settings import saas_settings
+from .speech_preview_service import reusable_page_preview
 from .storage import object_store
 from .tts_pipeline import build_course_tts, normalize_external_audio, synthesize_course_audio
 
@@ -326,6 +327,33 @@ class LocalMLXCourseHandler:
                 return normalize_external_audio(direct_audio_path, target)
             if tts_runtime is None:
                 raise RuntimeError("No TTS voice or per-slide audio is available")
+            if voice is not None:
+                with SessionLocal() as db:
+                    cached = reusable_page_preview(
+                        db,
+                        tenant_id=job.tenant_id,
+                        course_id=course.id,
+                        slide_index=slide.index,
+                        text=plan["narration"],
+                        voice=voice,
+                        course_settings=settings_payload,
+                    )
+                    if cached is not None:
+                        _, preview_asset = cached
+                        try:
+                            object_store.materialize(preview_asset.object_key, target)
+                        except Exception as exc:  # noqa: BLE001
+                            target.unlink(missing_ok=True)
+                            log.warning(
+                                "Speech preview cache unavailable; synthesizing slide=%s asset=%s error=%s",
+                                slide.index,
+                                preview_asset.id,
+                                exc,
+                            )
+                        else:
+                            plan["audio_source"] = "speech_preview"
+                            return target
+            plan["audio_source"] = "synthesized"
             return synthesize_course_audio(tts_runtime, plan["narration"], target)
 
         clips: list[Path] = []
@@ -359,6 +387,7 @@ class LocalMLXCourseHandler:
                 slide_state["audio"] = "done"
                 slide_state["audio_seconds"] = round(duration, 2)
                 slide_state["tts_elapsed_seconds"] = round(time.time() - audio_started, 2)
+                slide_state["audio_source"] = plan.get("audio_source", "provided")
 
                 # Start page N+1 TTS immediately before page N enters the much
                 # longer MuseTalk GPU step.  This hides most per-page TTS latency.

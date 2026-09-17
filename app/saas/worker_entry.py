@@ -17,12 +17,13 @@ from ..config import settings
 from . import worker as base_worker
 from .avatar_alpha import AlphaCycleCache
 from .avatar_matting_service import ready_matting_assets
-from .avatar_matting_worker import process_one_avatar_matting
+from .avatar_matting_worker import process_one_avatar_matting, recover_stale_avatar_matting
 from .background_themes import ensure_builtin_backgrounds
 from .database import SessionLocal
 from .models import Asset, Avatar, Course
 from .queue import build_job_queue, normalize_engine
 from .settings import saas_settings
+from .speech_preview_worker import process_one_speech_preview, recover_stale_speech_previews
 from .storage import object_store
 from .transparent_composer import TransparentCourseComposer
 
@@ -235,7 +236,7 @@ def _start_worker_heartbeat(engine: str) -> None:
                 "machine": platform.machine(),
                 "pid": os.getpid(),
                 "updated_at": time.time(),
-                "capabilities": ["musetalk", "portrait-matting", "transparent-avatar-compose"],
+                "capabilities": ["musetalk", "portrait-matting", "speech-preview", "transparent-avatar-compose"],
             }
             try:
                 client.set(key, json.dumps(payload, ensure_ascii=False), ex=20)
@@ -255,20 +256,32 @@ def run_forever() -> None:
     _start_worker_heartbeat(engine)
     handler = base_worker.build_render_handler()
     recovered = base_worker.job_queue.recover_stale()
-    log.info("Mac SaaS worker started renderer=%s recovered=%s", handler.__class__.__name__, recovered)
+    recovered_previews = recover_stale_speech_previews() if engine == "musetalk" else 0
+    recovered_matting = recover_stale_avatar_matting() if engine == "musetalk" else 0
+    log.info(
+        "Mac SaaS worker started renderer=%s recovered=%s speech_previews=%s avatar_matting=%s",
+        handler.__class__.__name__,
+        recovered,
+        recovered_previews,
+        recovered_matting,
+    )
     last_recovery = time.monotonic()
     while True:
-        # One asset-level matting job and one course render are alternated. This
-        # prevents portrait preparation from starving courses (and vice versa)
-        # while keeping heavy local workloads serialized on a single Mac.
+        # Run at most one job of each kind per cycle. Heavy local workloads stay
+        # serialized, while repeated previews cannot starve a queued course.
+        processed_preview = process_one_speech_preview() if engine == "musetalk" else False
         processed_matte = process_one_avatar_matting() if engine == "musetalk" else False
         processed_render = base_worker.process_one(handler)
         if time.monotonic() - last_recovery >= 60:
             recovered = base_worker.job_queue.recover_stale()
             if recovered:
                 log.warning("Recovered %s stale course render jobs", recovered)
+            if engine == "musetalk":
+                recovered_matting = recover_stale_avatar_matting()
+                if recovered_matting:
+                    log.warning("Released %s stale avatar matting jobs", recovered_matting)
             last_recovery = time.monotonic()
-        if not processed_matte and not processed_render:
+        if not processed_preview and not processed_matte and not processed_render:
             time.sleep(0.2)
 
 

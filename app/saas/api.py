@@ -100,6 +100,8 @@ def capabilities() -> dict:
         "worker_heartbeat": True,
         "resident_musetalk_runtime": True,
         "tts_video_prefetch": True,
+        "course_speech_preview": True,
+        "course_pronunciation_corrections": True,
         "usage_quota": True,
         "plans": True,
         "admin": True,
