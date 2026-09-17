@@ -70,18 +70,18 @@ CSS = r'''
   align-items: flex-start !important;
 }
 
-#page > .grid > .card h3 {
+#page > .grid > .card:has([data-dh-image-id]) h3 {
   margin: 0 0 2px !important;
   font-size: 17px;
   line-height: 1.28;
-  letter-spacing: -.015em;
+  letter-spacing: 0;
   color: #f3f7ff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-#page > .grid > .card h3 + .muted {
+#page > .grid > .card:has([data-dh-image-id]) h3 + .muted {
   font-size: 11px !important;
   line-height: 1.45;
   color: #6f7e92 !important;
