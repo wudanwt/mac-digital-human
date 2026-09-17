@@ -33,7 +33,7 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
 fi
 PY="$ROOT/.venv/bin/python"
 
-uv pip install --python "$PY" -e '.[saas]'
+uv pip install --python "$PY" -e '.[saas,matting]'
 
 mkdir -p vendor models workspace outputs samples profiles benchmarks/local
 
@@ -63,6 +63,10 @@ uv pip install --python "$PY" \
   gdown pillow scipy requests
 
 "$PY" scripts/setup_models.py --variant "$VARIANT"
+
+echo
+echo "=== 准备透明讲师抠像模型 ==="
+"$PY" scripts/setup_matting.py
 
 echo
 "$PY" scripts/check_runtime.py --engine musetalk --variant "$VARIANT" || true
