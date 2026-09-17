@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import importlib.util
 
 from app.tts import CosyVoiceTTS, create_tts, infer_provider
+from app.tts.cosyvoice import apply_pronunciation_replacements
 
 
 def test_cosyvoice2_is_default_provider():
@@ -35,6 +36,22 @@ def test_cosyvoice_reference_audio_is_resolved_from_manifest_base(tmp_path: Path
     assert isinstance(provider, CosyVoiceTTS)
     assert provider.config.ref_audio == str((tmp_path / "voice.wav").resolve())
     assert provider.config.ref_text == "参考音频文本"
+
+
+def test_cosyvoice_pronunciation_replacements_are_tts_only():
+    source = "今天优优认识了谁？"
+    assert apply_pronunciation_replacements(source, {"优优": "悠悠"}) == "今天悠悠认识了谁？"
+    assert source == "今天优优认识了谁？"
+
+
+def test_cosyvoice_registry_accepts_pronunciation_replacements():
+    provider = create_tts(
+        {
+            "provider": "cosyvoice2",
+            "pronunciation_replacements": {"优优": "悠悠", "": "忽略"},
+        }
+    )
+    assert provider.config.pronunciation_replacements == {"优优": "悠悠"}
 
 
 def _assert_reference_audio_normalized(tmp_path: Path, monkeypatch, suffix: str) -> None:

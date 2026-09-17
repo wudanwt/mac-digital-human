@@ -8,6 +8,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from .base import TTSError, TTSProvider
 
@@ -23,6 +24,21 @@ class CosyVoiceConfig:
     instruct: str | None = None
     speed: float = 1.0
     pause_seconds: float = 0.22
+    pronunciation_replacements: Mapping[str, str] | None = None
+
+
+def apply_pronunciation_replacements(text: str, replacements: Mapping[str, str] | None) -> str:
+    """Apply opt-in, TTS-only pronunciation aliases without changing captions."""
+    if not replacements:
+        return text
+
+    result = text
+    for source, spoken_form in sorted(replacements.items(), key=lambda item: len(str(item[0])), reverse=True):
+        source = str(source).strip()
+        spoken_form = str(spoken_form).strip()
+        if source and spoken_form:
+            result = result.replace(source, spoken_form)
+    return result
 
 
 class CosyVoiceTTS:
@@ -138,6 +154,13 @@ class CosyVoiceTTS:
         if not clean_text:
             raise TTSError("text is empty for synthesis")
 
+        spoken_text = apply_pronunciation_replacements(
+            clean_text,
+            kwargs.get("pronunciation_replacements") or self.config.pronunciation_replacements,
+        )
+        if spoken_text != clean_text:
+            logger.info("Applied configured pronunciation replacements before CosyVoice synthesis")
+
         try:
             import soundfile as sf
         except ImportError as exc:
@@ -197,7 +220,7 @@ class CosyVoiceTTS:
             with CosyVoiceTTS._inference_lock:
                 service.pause_seconds = self.config.pause_seconds
                 result = service.synthesize(
-                    text=clean_text,
+                    text=spoken_text,
                     reference_audio=str(resolved_ref_audio),
                     reference_text=ref_text.strip(),
                     speed=speed,

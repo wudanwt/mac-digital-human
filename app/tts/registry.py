@@ -16,6 +16,17 @@ def _resolve_path(base: Path, value: str | None) -> str | None:
     return str(path)
 
 
+def _pronunciation_replacements(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    replacements = {
+        str(source).strip(): str(spoken_form).strip()
+        for source, spoken_form in value.items()
+        if str(source).strip() and str(spoken_form).strip()
+    }
+    return replacements or None
+
+
 def infer_provider(payload: dict[str, Any]) -> str:
     explicit = str(payload.get("provider") or "").strip().lower()
     if explicit:
@@ -54,6 +65,7 @@ def create_tts(payload: dict[str, Any] | None = None, *, base: Path | None = Non
             instruct=payload.get("instruct"),
             speed=float(payload.get("speed") or 1.0),
             pause_seconds=float(payload.get("pause_seconds") or 0.22),
+            pronunciation_replacements=_pronunciation_replacements(payload.get("pronunciation_replacements")),
         )
         return CosyVoiceTTS(config)
 
