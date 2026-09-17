@@ -33,11 +33,9 @@ class RenderTaskSnapshot(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"),
         index=True,
     )
-    course_id: Mapped[str] = mapped_column(
-        String(32),
-        ForeignKey("courses.id", ondelete="CASCADE"),
-        index=True,
-    )
+    # Keep the original course id for audit/retry linkage, but do not make the
+    # snapshot lifecycle depend on a mutable course row.
+    course_id: Mapped[str] = mapped_column(String(32), index=True)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     snapshot_hash: Mapped[str] = mapped_column(String(64), index=True)
     snapshot_json: Mapped[str] = mapped_column(Text)
