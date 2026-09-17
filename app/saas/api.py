@@ -16,6 +16,8 @@ from .compliance_api import router as compliance_router
 from .course_tools_api import router as course_tools_router
 from .database import engine
 from .digital_human_api import router as digital_human_router
+from .distributed_worker_api import admin_router as distributed_worker_admin_router
+from .distributed_worker_api import internal_router as distributed_worker_internal_router
 from .job_detail_api import router as job_detail_router
 from .settings import saas_settings
 from .storage import object_store
@@ -98,6 +100,12 @@ def capabilities() -> dict:
         "render_job_slide_detail": True,
         "engine_isolated_queues": True,
         "worker_heartbeat": True,
+        "distributed_page_rendering": saas_settings.distributed_render_enabled,
+        "distributed_worker_auth": True,
+        "distributed_worker_leases": True,
+        "distributed_range_download": True,
+        "distributed_resumable_upload": True,
+        "render_contract_version": saas_settings.render_contract_version,
         "resident_musetalk_runtime": True,
         "tts_video_prefetch": True,
         "course_speech_preview": True,
@@ -127,6 +135,8 @@ for child in (
     course_tools_router,
     backgrounds_router,
     worker_status_router,
+    distributed_worker_admin_router,
+    distributed_worker_internal_router,
     job_detail_router,
     job_router,
     dashboard_router,
