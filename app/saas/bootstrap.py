@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from . import avatar_matting_models as _avatar_matting_models  # noqa: F401 - register Base metadata
 from .background_themes import ensure_builtin_backgrounds
 from .database import SessionLocal, create_all
 from .models import Plan, User
