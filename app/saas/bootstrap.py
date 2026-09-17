@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from . import avatar_matting_models as _avatar_matting_models  # noqa: F401 - register Base metadata
+from . import render_snapshot_models as _render_snapshot_models  # noqa: F401 - register Base metadata
+from . import render_snapshot_service as _render_snapshot_service  # noqa: F401 - register snapshot capture hook
 from . import speech_preview_models as _speech_preview_models  # noqa: F401 - register Base metadata
 from .background_themes import ensure_builtin_backgrounds
 from .database import SessionLocal, create_all
