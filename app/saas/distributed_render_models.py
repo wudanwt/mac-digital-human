@@ -22,7 +22,9 @@ class WorkerNode(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(120))
-    credential_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    # A unique constraint is enough to index credentials in PostgreSQL; avoid a
+    # second redundant index so create_all and Alembic stay structurally aligned.
+    credential_hash: Mapped[str] = mapped_column(String(128), unique=True)
     status: Mapped[str] = mapped_column(String(32), default="offline", index=True)
     accepting_tasks: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     slots_total: Mapped[int] = mapped_column(Integer, default=1)
@@ -57,6 +59,7 @@ class RenderSubtask(Base):
     # 0 is reserved for non-page tasks (prepare/finalize); page tasks use 1..N.
     slide_index: Mapped[int] = mapped_column(Integer, default=0)
     config_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
     status: Mapped[str] = mapped_column(String(32), default="blocked", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     estimated_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
