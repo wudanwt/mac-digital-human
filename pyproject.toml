@@ -69,6 +69,7 @@ dev = [
 [project.scripts]
 mac-avatar = "app.cli:main"
 saas-worker = "app.saas.worker_entry:run_forever"
+saas-distributed-center = "app.saas.distributed_center:main"
 saas-remote-page-worker = "app.saas.remote_page_worker:main"
 saas-bootstrap = "app.saas.bootstrap:main"
 saas-manage = "app.saas.manage:main"
