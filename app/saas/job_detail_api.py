@@ -8,9 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .distributed_render_models import RenderSubtask, WorkerNode
+from .distributed_render_models import RenderAttempt, RenderSubtask, WorkerNode
 from .models import Course, RenderJobRecord
+from .queue import job_queue
 from .security import Principal, get_principal
+from .services import audit, refund_render_seconds
 from .settings import saas_settings
 
 
@@ -93,26 +95,7 @@ def _distributed_summary(tasks: list[dict]) -> dict | None:
     }
 
 
-@router.get("/{job_id}/detail")
-def job_detail(
-    job_id: str,
-    principal: Annotated[Principal, Depends(get_principal)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    item = db.scalar(
-        select(RenderJobRecord).where(
-            RenderJobRecord.id == job_id,
-            RenderJobRecord.tenant_id == principal.tenant_id,
-        )
-    )
-    if item is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    course = db.get(Course, item.course_id) if item.course_id else None
-    if course is not None and course.tenant_id != principal.tenant_id:
-        course = None
-    payload = _payload(item)
-    runtime = payload.get("_runtime") or {}
-    tasks = _distributed_tasks(db, item.id)
+def _job_response(item: RenderJobRecord, *, course: Course | None, tasks: list[dict], runtime: dict) -> dict:
     return {
         "id": item.id,
         "course_id": item.course_id,
@@ -140,3 +123,133 @@ def job_detail(
         "started_at": item.started_at.isoformat() if item.started_at else None,
         "completed_at": item.completed_at.isoformat() if item.completed_at else None,
     }
+
+
+@router.get("/{job_id}/detail")
+def job_detail(
+    job_id: str,
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    item = db.scalar(
+        select(RenderJobRecord).where(
+            RenderJobRecord.id == job_id,
+            RenderJobRecord.tenant_id == principal.tenant_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    course = db.get(Course, item.course_id) if item.course_id else None
+    if course is not None and course.tenant_id != principal.tenant_id:
+        course = None
+    payload = _payload(item)
+    runtime = payload.get("_runtime") or {}
+    tasks = _distributed_tasks(db, item.id)
+    return _job_response(item, course=course, tasks=tasks, runtime=runtime)
+
+
+@router.post("/{job_id}/cancel")
+def cancel_job_with_distributed_support(
+    job_id: str,
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Cancel either a legacy whole-course job or a live page-task graph.
+
+    This router is mounted before the legacy studio job router, so it upgrades the
+    historical queued-only cancellation endpoint without changing its public URL.
+    Active remote attempts are invalidated transactionally; their next renew or
+    progress report receives a lease conflict and cannot publish stale output.
+    """
+
+    item = db.scalar(
+        select(RenderJobRecord)
+        .where(
+            RenderJobRecord.id == job_id,
+            RenderJobRecord.tenant_id == principal.tenant_id,
+        )
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if item.user_id != principal.user_id and principal.role not in {"owner", "admin"} and not principal.is_superuser:
+        raise HTTPException(status_code=403, detail="You cannot cancel this job")
+    if item.status == "canceled":
+        course = db.get(Course, item.course_id) if item.course_id else None
+        tasks = _distributed_tasks(db, item.id)
+        return _job_response(item, course=course, tasks=tasks, runtime=_payload(item).get("_runtime") or {})
+    if item.status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Only queued or running jobs can be canceled")
+
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    subtasks = db.scalars(
+        select(RenderSubtask)
+        .where(RenderSubtask.parent_job_id == item.id)
+        .with_for_update()
+    ).all()
+    node_ids: set[str] = set()
+    for task in subtasks:
+        if task.status in {"succeeded", "failed", "canceled"}:
+            continue
+        if task.assigned_node_id:
+            node_ids.add(task.assigned_node_id)
+        if task.active_attempt_id:
+            attempt = db.get(RenderAttempt, task.active_attempt_id)
+            if attempt and attempt.status == "running":
+                attempt.status = "canceled"
+                attempt.error = "parent render canceled"
+                attempt.completed_at = now
+        task.status = "canceled"
+        task.stage = "canceled"
+        task.error = "parent render canceled"
+        task.completed_at = now
+        task.available_at = None
+        task.lease_expires_at = None
+        task.active_attempt_id = None
+        task.assigned_node_id = None
+
+    for node_id in node_ids:
+        node = db.scalar(select(WorkerNode).where(WorkerNode.id == node_id).with_for_update())
+        if node is None:
+            continue
+        node.slots_busy = max(0, int(node.slots_busy or 0) - 1)
+        if node.current_task_id and any(task.id == node.current_task_id for task in subtasks):
+            node.current_task_id = None
+        if node.status not in {"revoked", "incompatible", "disk_low"}:
+            node.status = "online" if node.accepting_tasks else "draining"
+
+    item.status = "canceled"
+    item.stage = "canceled"
+    item.error = None
+    item.completed_at = now
+    refund_render_seconds(
+        db,
+        tenant_id=item.tenant_id,
+        user_id=item.user_id,
+        job_id=item.id,
+        seconds=item.estimated_seconds,
+    )
+    course = db.get(Course, item.course_id) if item.course_id else None
+    if course and course.tenant_id == principal.tenant_id and course.status != "completed":
+        course.status = "draft"
+    audit(
+        db,
+        action="render.cancel",
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+        target_type="job",
+        target_id=item.id,
+        details={"distributed_subtasks": len(subtasks), "previous_status": "running" if item.started_at else "queued"},
+    )
+    db.commit()
+
+    # Legacy Redis cancellation remains best effort. Distributed parents are not
+    # enqueued there, while old queued jobs retain the historical behavior.
+    try:
+        job_queue.cancel(item.id)
+    except Exception:
+        pass
+
+    db.refresh(item)
+    tasks = _distributed_tasks(db, item.id)
+    return _job_response(item, course=course, tasks=tasks, runtime=_payload(item).get("_runtime") or {})
