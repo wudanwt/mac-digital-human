@@ -51,7 +51,10 @@ jobs:
       - name: Compile
         run: python -m compileall -q app scripts migrations
       - name: Shell syntax
-        run: bash -n scripts/saas/start_mlx_worker_mac.sh
+        run: |
+          bash -n scripts/saas/start_mlx_worker_mac.sh
+          bash -n scripts/saas/start_distributed_center.sh
+          bash -n scripts/saas/start_remote_page_worker_mac.sh
       - name: Browser JavaScript syntax
         run: |
           python - <<'PY'
