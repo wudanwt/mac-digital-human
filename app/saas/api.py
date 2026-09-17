@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 
 from .account_api import router as account_router
@@ -19,6 +19,7 @@ from .digital_human_api import router as digital_human_router
 from .distributed_worker_api import admin_router as distributed_worker_admin_router
 from .distributed_worker_api import internal_router as distributed_worker_internal_router
 from .job_detail_api import router as job_detail_router
+from .security import require_superuser
 from .settings import saas_settings
 from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
@@ -122,6 +123,15 @@ def capabilities() -> dict:
     }
 
 
+# Worker-node credentials control shared render infrastructure rather than a
+# single tenant. Provisioning, draining and revocation therefore require the
+# platform superuser role even though the router also keeps its local admin
+# checks for defense in depth.
+router.include_router(
+    distributed_worker_admin_router,
+    dependencies=[Depends(require_superuser)],
+)
+
 for child in (
     auth_router,
     account_router,
@@ -135,7 +145,6 @@ for child in (
     course_tools_router,
     backgrounds_router,
     worker_status_router,
-    distributed_worker_admin_router,
     distributed_worker_internal_router,
     job_detail_router,
     job_router,
