@@ -52,6 +52,7 @@ def upgrade() -> None:
         sa.Column("task_type", sa.String(length=24), nullable=False),
         sa.Column("slide_index", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("config_hash", sa.String(length=64), nullable=False, server_default=""),
+        sa.Column("payload_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="blocked"),
         sa.Column("priority", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("estimated_seconds", sa.Float(), nullable=True),
