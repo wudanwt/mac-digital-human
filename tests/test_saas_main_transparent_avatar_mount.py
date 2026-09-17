@@ -14,7 +14,7 @@ def test_transparent_avatar_assets_are_mounted_in_app_shell() -> None:
 
 
 def test_transparent_avatar_routes_exist() -> None:
-    paths = {route.path for route in saas_main.app.routes}
+    paths = {path for route in saas_main.app.routes if (path := getattr(route, "path", None))}
     assert "/avatar-matting.css" in paths
     assert "/avatar-matting.js" in paths
     assert "/course-avatar-mode.css" in paths
