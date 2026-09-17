@@ -4,6 +4,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import BinaryIO, Protocol
+from uuid import uuid4
 
 from .settings import saas_settings
 
@@ -30,18 +31,41 @@ class LocalObjectStore:
             raise ValueError("invalid object key")
         return target
 
+    @staticmethod
+    def _temporary_target(target: Path) -> Path:
+        return target.with_name(f".{target.name}.{uuid4().hex}.part")
+
+    @staticmethod
+    def _commit_file(temp: Path, target: Path) -> None:
+        # temp and target deliberately share a directory/filesystem, so replace is
+        # atomic: readers see either the previous complete object or the newly
+        # verified complete object, never a partial copy.
+        os.replace(temp, target)
+
     def put_file(self, source: Path, key: str) -> str:
         target = self._target(key)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        temp = self._temporary_target(target)
+        try:
+            shutil.copy2(source, temp)
+            self._commit_file(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
         return f"local://{key}"
 
     def put_stream(self, stream: BinaryIO, key: str, content_type: str | None = None) -> str:
         del content_type
         target = self._target(key)
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as out:
-            shutil.copyfileobj(stream, out, length=1024 * 1024)
+        temp = self._temporary_target(target)
+        try:
+            with temp.open("wb") as out:
+                shutil.copyfileobj(stream, out, length=1024 * 1024)
+                out.flush()
+                os.fsync(out.fileno())
+            self._commit_file(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
         return f"local://{key}"
 
     def materialize(self, key: str, destination: Path) -> Path:
