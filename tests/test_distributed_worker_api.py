@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from app.saas.database import SessionLocal
 from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
+from app.saas.models import User
+from app.saas.security import decode_access_token
 from app.saas.settings import saas_settings
 from app.saas_main import app
 
@@ -28,6 +30,15 @@ def _register_user(client: TestClient) -> str:
     )
     assert response.status_code == 201, response.text
     return response.json()["access_token"]
+
+
+def _promote_superuser(token: str) -> None:
+    principal = decode_access_token(token)
+    with SessionLocal() as db:
+        user = db.get(User, principal.user_id)
+        assert user is not None
+        user.is_superuser = True
+        db.commit()
 
 
 def _upload(client: TestClient, token: str, name: str, kind: str, content: bytes) -> dict:
@@ -114,6 +125,16 @@ def test_worker_api_auth_range_resume_and_idempotent_complete() -> None:
                     ],
                 )
                 db.commit()
+
+            # Worker credentials are platform infrastructure and cannot be minted
+            # by an ordinary tenant owner.
+            forbidden = client.post(
+                "/api/saas/distributed/workers",
+                headers=_headers(user_token),
+                json={"name": "forbidden-mini", "slots_total": 1},
+            )
+            assert forbidden.status_code == 403
+            _promote_superuser(user_token)
 
             provision = client.post(
                 "/api/saas/distributed/workers",
