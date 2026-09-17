@@ -60,6 +60,12 @@ class SaaSSettings:
     distributed_max_attempts: int = int(os.getenv("SAAS_DISTRIBUTED_MAX_ATTEMPTS", "3"))
     distributed_stall_seconds: int = int(os.getenv("SAAS_DISTRIBUTED_STALL_SECONDS", "1200"))
     render_contract_version: str = os.getenv("SAAS_RENDER_CONTRACT_VERSION", "v1")
+    distributed_expected_code_version: str = os.getenv("SAAS_DISTRIBUTED_EXPECTED_CODE_VERSION", "")
+    distributed_expected_model_version: str = os.getenv("SAAS_DISTRIBUTED_EXPECTED_MODEL_VERSION", "")
+    distributed_cache_gb: int = int(os.getenv("SAAS_DISTRIBUTED_CACHE_GB", "20"))
+    distributed_min_disk_free_gb: int = int(os.getenv("SAAS_DISTRIBUTED_MIN_DISK_FREE_GB", "10"))
+    distributed_transfer_slots: int = int(os.getenv("SAAS_DISTRIBUTED_TRANSFER_SLOTS", "2"))
+    distributed_upload_chunk_mb: int = int(os.getenv("SAAS_DISTRIBUTED_UPLOAD_CHUNK_MB", "8"))
 
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
