@@ -19,8 +19,10 @@ from ..ppt import PresentationParser, PPTRenderer
 from ..subtitles import SubtitleItem, SubtitlesGenerator
 from .database import SessionLocal
 from .domain import JobStatus, RenderJob
-from .models import Asset, Avatar, Course, RenderJobRecord, VoiceProfile
+from .models import Asset, Course, RenderJobRecord
 from .queue import job_queue
+from .render_core import RenderWorkspace, build_page_plans
+from .render_snapshot_service import resolve_render_inputs
 from .services import enforce_storage_limit, reconcile_render_seconds, refund_render_seconds
 from .settings import saas_settings
 from .speech_preview_service import reusable_page_preview
@@ -53,6 +55,14 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _assert_snapshot_asset(snapshot: dict[str, Any] | None, asset: Asset) -> None:
+    if not snapshot:
+        return
+    expected = ((snapshot.get("assets") or {}).get(asset.id) or {}).get("sha256")
+    if expected and asset.sha256 and expected != asset.sha256:
+        raise RuntimeError(f"snapshot asset hash changed: {asset.id}")
 
 
 def _font_file() -> str | None:
@@ -188,43 +198,22 @@ class LocalMLXCourseHandler:
 
         render_started = time.time()
         with SessionLocal() as db:
-            course = db.scalar(
-                select(Course).where(
-                    Course.id == job.payload.get("course_id"),
-                    Course.tenant_id == job.tenant_id,
-                )
-            )
-            if course is None:
-                raise RuntimeError("course not found")
-            avatar = (
-                db.scalar(select(Avatar).where(Avatar.id == course.avatar_id, Avatar.tenant_id == job.tenant_id))
-                if course.avatar_id else None
-            )
-            voice_id = course.voice_profile_id or (avatar.voice_profile_id if avatar else None)
-            voice = (
-                db.scalar(select(VoiceProfile).where(VoiceProfile.id == voice_id, VoiceProfile.tenant_id == job.tenant_id))
-                if voice_id else None
-            )
-            ppt_asset = _asset(db, job.tenant_id, course.ppt_asset_id)
-            if ppt_asset is None:
-                raise RuntimeError("course PPT asset is required")
-            if avatar is None or not avatar.master_video_asset_id:
-                raise RuntimeError("MuseTalk course requires avatar master video")
-            master_asset = _asset(db, job.tenant_id, avatar.master_video_asset_id)
-            if master_asset is None:
-                raise RuntimeError("avatar master video asset missing")
-            ref_asset = _asset(db, job.tenant_id, voice.reference_asset_id) if voice and voice.reference_asset_id else None
-            direct_audio = _asset(db, job.tenant_id, job.payload.get("audio_asset_id"))
-            script_entries = json.loads(course.script_json or "[]")
-            settings_payload = json.loads(course.settings_json or "{}")
+            inputs = resolve_render_inputs(db, job)
 
-        work = settings.workspace_dir / "saas-workers" / job.id
-        slide_dir = work / "slides"
-        audio_dir = work / "audio"
-        avatar_dir = work / "avatars"
-        segment_dir = work / "segments"
-        for path in (slide_dir, audio_dir, avatar_dir, segment_dir):
-            path.mkdir(parents=True, exist_ok=True)
+        course_id = inputs.course_id
+        ppt_asset = inputs.ppt_asset
+        master_asset = inputs.master_asset
+        ref_asset = inputs.ref_asset
+        direct_audio = inputs.direct_audio
+        voice = inputs.voice
+        script_entries = inputs.script_entries
+        settings_payload = inputs.settings_payload
+
+        workspace = RenderWorkspace.create(settings.workspace_dir / "saas-workers" / job.id)
+        work = workspace.root
+        slide_dir = workspace.slide_dir
+        audio_dir = workspace.audio_dir
+        segment_dir = workspace.segment_dir
 
         ppt_path = _materialize(ppt_asset, work)
         master_path = _materialize(master_asset, work)
@@ -233,11 +222,7 @@ class LocalMLXCourseHandler:
 
         deck = PresentationParser.parse(ppt_path)
         total = max(1, len(deck.slides))
-        script_map = {
-            int(item.get("index", idx + 1)): item
-            for idx, item in enumerate(script_entries)
-            if isinstance(item, dict)
-        }
+        plans = build_page_plans(deck, script_entries, settings_payload)
         runtime: dict[str, Any] = {
             "stage": 1,
             "stage_name": "课件解析与底板生成",
@@ -246,18 +231,20 @@ class LocalMLXCourseHandler:
             "step_detail": "准备渲染高清幻灯片底板",
             "elapsed_seconds": 0.0,
             "eta_seconds": None,
+            "immutable_inputs": inputs.immutable,
+            "snapshot_hash": (inputs.snapshot or {}).get("snapshot_hash"),
             "tts_prefetch": os.getenv("SAAS_TTS_PREFETCH", "1").strip().lower() not in {"0", "false", "no", "off"},
             "slides": {
-                str(slide.index): {
-                    "index": slide.index,
-                    "title": slide.title,
+                str(plan.index): {
+                    "index": plan.index,
+                    "title": plan.title,
                     "audio": "pending",
                     "video": "pending",
                     "compose": "pending",
                     "audio_seconds": None,
                     "render_seconds": None,
                 }
-                for slide in deck.slides
+                for plan in plans
             },
         }
 
@@ -285,35 +272,21 @@ class LocalMLXCourseHandler:
 
         tts_runtime = None
         if voice and direct_audio_path is None:
-            tts_runtime = build_course_tts(
-                voice,
-                ref_audio=ref_path,
-                course_settings=settings_payload,
-                base=work,
+            requires_tts = any(
+                not plan.override.get("audio_asset_id") and plan.index not in inputs.preview_audio_by_slide
+                for plan in plans
             )
+            if requires_tts:
+                tts_runtime = build_course_tts(
+                    voice,
+                    ref_audio=ref_path,
+                    course_settings=settings_payload,
+                    base=work,
+                )
 
-        plans: list[dict[str, Any]] = []
-        for slide in deck.slides:
-            override = script_map.get(slide.index, {})
-            narration = str(
-                override.get("narration")
-                or override.get("script")
-                or slide.narration
-                or slide.title
-                or f"第{slide.index}页"
-            ).strip()
-            plans.append(
-                {
-                    "slide": slide,
-                    "override": override,
-                    "narration": narration,
-                    "layout": str(override.get("layout") or settings_payload.get("layout") or slide.layout or "pip"),
-                }
-            )
-
-        def make_audio(plan: dict[str, Any]) -> Path:
-            slide = plan["slide"]
-            override = plan["override"]
+        def make_audio(plan) -> Path:
+            slide = plan.slide
+            override = plan.override
             target = audio_dir / f"{slide.index:03d}.wav"
             slide_audio_asset_id = override.get("audio_asset_id")
             if slide_audio_asset_id:
@@ -321,20 +294,33 @@ class LocalMLXCourseHandler:
                     item = _asset(db, job.tenant_id, str(slide_audio_asset_id))
                     if item is None:
                         raise RuntimeError(f"audio asset missing for slide {slide.index}")
+                    _assert_snapshot_asset(inputs.snapshot, item)
                     source = _materialize(item, work)
                 return normalize_external_audio(source, target)
             if direct_audio_path is not None and len(plans) == 1:
                 return normalize_external_audio(direct_audio_path, target)
+
+            frozen_preview_id = inputs.preview_audio_by_slide.get(plan.index)
+            if frozen_preview_id:
+                with SessionLocal() as db:
+                    preview_asset = _asset(db, job.tenant_id, frozen_preview_id)
+                    if preview_asset is None:
+                        raise RuntimeError(f"frozen speech preview missing for slide {slide.index}")
+                    _assert_snapshot_asset(inputs.snapshot, preview_asset)
+                    object_store.materialize(preview_asset.object_key, target)
+                plan.override["audio_source"] = "speech_preview"
+                return target
+
             if tts_runtime is None:
                 raise RuntimeError("No TTS voice or per-slide audio is available")
-            if voice is not None:
+            if voice is not None and not inputs.immutable:
                 with SessionLocal() as db:
                     cached = reusable_page_preview(
                         db,
                         tenant_id=job.tenant_id,
-                        course_id=course.id,
+                        course_id=course_id,
                         slide_index=slide.index,
-                        text=plan["narration"],
+                        text=plan.narration,
                         voice=voice,
                         course_settings=settings_payload,
                     )
@@ -351,10 +337,10 @@ class LocalMLXCourseHandler:
                                 exc,
                             )
                         else:
-                            plan["audio_source"] = "speech_preview"
+                            plan.override["audio_source"] = "speech_preview"
                             return target
-            plan["audio_source"] = "synthesized"
-            return synthesize_course_audio(tts_runtime, plan["narration"], target)
+            plan.override["audio_source"] = "synthesized"
+            return synthesize_course_audio(tts_runtime, plan.narration, target)
 
         clips: list[Path] = []
         subtitle_items: list[SubtitleItem] = []
@@ -366,8 +352,8 @@ class LocalMLXCourseHandler:
 
         try:
             for pos, plan in enumerate(plans, start=1):
-                slide = plan["slide"]
-                override = plan["override"]
+                slide = plan.slide
+                override = plan.override
                 slide_state = runtime["slides"][str(slide.index)]
                 slide_state["audio"] = "running"
                 emit(
@@ -376,7 +362,7 @@ class LocalMLXCourseHandler:
                     stage=2,
                     stage_name="逐页高保真语音合成",
                     current_slide=slide.index,
-                    detail=f"正在生成第 {slide.index} 页语音（{len(plan['narration'])} 字）",
+                    detail=f"正在生成第 {slide.index} 页语音（{len(plan.narration)} 字）",
                 )
                 audio_started = time.time()
                 if audio_future is not None:
@@ -387,15 +373,16 @@ class LocalMLXCourseHandler:
                 slide_state["audio"] = "done"
                 slide_state["audio_seconds"] = round(duration, 2)
                 slide_state["tts_elapsed_seconds"] = round(time.time() - audio_started, 2)
-                slide_state["audio_source"] = plan.get("audio_source", "provided")
+                slide_state["audio_source"] = override.get("audio_source", "provided")
 
-                # Start page N+1 TTS immediately before page N enters the much
-                # longer MuseTalk GPU step.  This hides most per-page TTS latency.
+                # Legacy whole-course mode can still prefetch page N+1 TTS while
+                # page N is in MuseTalk. Distributed page workers disable this
+                # with SAAS_TTS_PREFETCH=0 and execute one page per compute slot.
                 next_future: Future[Path] | None = None
                 if executor and pos < len(plans):
                     next_future = executor.submit(make_audio, plans[pos])
 
-                layout = plan["layout"]
+                layout = plan.layout
                 avatar_video: Path | None = None
                 if layout != "full_slide":
                     slide_state["video"] = "running"
@@ -453,7 +440,7 @@ class LocalMLXCourseHandler:
                 clips.append(target)
 
                 segment_subs = SubtitlesGenerator.generate_segment_subtitles(
-                    text=plan["narration"],
+                    text=plan.narration,
                     duration=duration,
                     start_offset=cursor,
                     start_index=subtitle_index,
