@@ -6,6 +6,8 @@
 
 - 多租户账号、工作区、成员与权限
 - 数字人资产：肖像 / 母版视频 / CosyVoice 2.0 克隆声音
+- 透明讲师资产：母版视频一次性人像抠像、Alpha 资产、透明 PNG 预览、白底质检视频
+- 课程讲师背景模式：透明叠加 / 纯白背景 / 原始背景，可逐页设置或一键应用全部页面
 - 四阶段课程工作室：课件 → 文稿确认 → 画面排版 → 包装与生成
 - PPT / PDF 逐页解析、缩略图与讲稿编辑
 - 16:9 PPT / 数字人自由拖拽排版、内置演播厅背景与自定义背景
@@ -33,7 +35,8 @@ SaaS API (Docker, :8918)
    `--> avatar:render:musetalk ----> Mac Apple Silicon Worker
                                       |-- CosyVoice 2.0
                                       |-- MuseTalk 1.5 MLX
-                                      `-- FFmpeg / Course Composer
+                                      |-- Portrait Matting / Alpha Assets
+                                      `-- FFmpeg / Transparent Course Composer
 ```
 
 Docker 控制面与 Mac Worker 通过 Redis 队列和共享素材目录协同。Mock 与 MuseTalk 使用独立队列，不会互相抢任务。
@@ -88,15 +91,62 @@ Apple Silicon 首次安装模型与运行环境：
 bash scripts/setup.sh
 ```
 
+`setup.sh` 会安装 SaaS、MuseTalk、CosyVoice 与人像抠像依赖，并预下载默认的 `birefnet-portrait` 抠像模型。也可以单独执行：
+
+```bash
+uv pip install --python .venv/bin/python -e '.[saas,matting]'
+.venv/bin/python scripts/setup_matting.py
+```
+
+如需切换本地抠像模型：
+
+```bash
+export AVATAR_MATTING_MODEL=birefnet-portrait
+```
+
 真实 SaaS 生成时，在 Mac 宿主机另开终端：
 
 ```bash
 bash scripts/saas/start_mlx_worker_mac.sh
 ```
 
-启动脚本会先检查 Apple Silicon、FFmpeg、PostgreSQL、Redis、共享素材目录、MuseTalk MLX 与 CosyVoice 模型，全部通过后才进入 Worker 循环。
+启动脚本会先检查 Apple Silicon、FFmpeg、PostgreSQL、Redis、共享素材目录、MuseTalk MLX、CosyVoice 与 Portrait Matting，全部通过后才进入 Worker 循环。
 
 详细说明见：[`docs/MAC_MLX_SAAS.md`](docs/MAC_MLX_SAAS.md)。
+
+## 透明讲师资产工作流
+
+透明抠像发生在数字人资产阶段，而不是每次课程生成时重复执行：
+
+```text
+原始母版视频
+  -> 一次性 Portrait Matting
+  -> Alpha Mask 视频
+  -> 透明 PNG 预览
+  -> 白底质检视频
+  -> 保存为数字人生产资产
+```
+
+课程生成时只复用 Alpha：
+
+```text
+CosyVoice 语音
+  -> MuseTalk 口型视频
+  -> 按 MuseTalk 同一 ping-pong 帧序列复用 Alpha
+  -> alphamerge
+  -> 透明人物叠加到 PPT / 背景
+  -> 最终 MP4
+```
+
+课程工作室支持三种讲师模式：
+
+- `transparent`：人物背景完全移除，直接透明叠加到课程画面，默认推荐。
+- `white`：使用同一套 Alpha，在讲师区域铺纯白背景。
+- `original`：保留原始母版视频背景，用于兼容旧课程或特殊场景。
+
+排版预览使用透明 PNG，最终成片使用对应 Alpha 视频；讲师框内统一采用 `center bottom` 底部对齐，避免预览与最终成片上下位置不一致。
+
+如果数字人更换母版视频，原透明资产会自然失效，需要针对新母版重新处理。课程选择透明或白底模式时，如果透明资产尚未完成，Worker 会拒绝生成并给出明确错误，而不会悄悄退化成错误背景。
 
 ## 真实课程生成链路
 
@@ -106,6 +156,7 @@ PPT / PDF
   -> 逐页讲稿
   -> CosyVoice 2.0 克隆语音
   -> MuseTalk 1.5 MLX 数字人口型
+  -> 复用预处理 Alpha（透明 / 白底模式）
   -> PPT / 数字人 / 背景排版
   -> 字幕与 AI 标识
   -> FFmpeg 合成
@@ -119,9 +170,11 @@ PPT / PDF
 
 - Python compile
 - Shell syntax
-- Browser JavaScript syntax
+- Browser JavaScript syntax（含透明资产 UI 与讲师模式 UI）
 - PostgreSQL Alembic upgrade / downgrade / upgrade
 - PostgreSQL + Redis pytest
+- MuseTalk ping-pong Alpha 索引回归测试
+- 真实 FFmpeg `alphamerge + overlay` 透明合成烟雾测试
 - Docker Compose validation
 - SaaS API Docker build
 
@@ -129,6 +182,9 @@ PPT / PDF
 
 ```text
 app/saas/                SaaS API、任务、存储、计费、合规与当前 Web UI
+app/saas/avatar_matting_* 透明讲师资产模型、API、处理引擎、Worker 与 UI
+app/saas/avatar_alpha.py MuseTalk 同步 Alpha 循环复用
+app/saas/transparent_composer.py 透明 / 白底讲师最终合成
 app/engines/             MuseTalk MLX 引擎与常驻 Runtime
 app/tts/                 CosyVoice Provider
 app/ppt/                 PPT / PDF 解析与渲染
