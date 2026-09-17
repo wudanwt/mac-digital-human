@@ -31,6 +31,6 @@ def get_db() -> Generator[Session, None, None]:
 
 def create_all() -> None:
     # Developer convenience only; production uses Alembic.
-    from . import compliance_models, models, speech_preview_models  # noqa: F401
+    from . import compliance_models, models, render_snapshot_models, speech_preview_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
