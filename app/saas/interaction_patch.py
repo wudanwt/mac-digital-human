@@ -46,6 +46,59 @@ JS = r'''
     });
   }
 
+  // A pronunciation correction is course-wide, but the studio's original
+  // "保存并试听" flow only synthesized the selected token. That made it look as
+  // though later occurrences on the same page were not corrected. Keep the
+  // quick token check, then automatically synthesize the whole page so every
+  // occurrence is verified through the exact production TTS path.
+  let pronunciationReview=null;
+  function patchPronunciationReview(){
+    const save=document.getElementById('savePronunciation');
+    if(save&&!save.dataset.fullPageReview){
+      save.dataset.fullPageReview='1';
+      save.textContent='保存并试听本页';
+      save.title='保存读音规则后，自动试听整页并验证所有相同词语';
+    }
+  }
+  function stopPronunciationReview(){
+    if(!pronunciationReview)return;
+    pronunciationReview.observer?.disconnect();
+    clearTimeout(pronunciationReview.timeout);
+    pronunciationReview=null;
+  }
+  function armPronunciationReview(source){
+    stopPronunciationReview();
+    const textarea=document.getElementById('studioNarration');
+    const pageText=textarea?.value||'';
+    const hits=source?pageText.split(source).length-1:0;
+    pronunciationReview={source,hits,observer:null,timeout:null};
+    pronunciationReview.observer=new MutationObserver(()=>{
+      patchPronunciationReview();
+      if(!pronunciationReview)return;
+      const state=document.getElementById('speechPreviewState');
+      const pageButton=document.getElementById('previewPage');
+      // The selected-word preview has completed. Start a fresh full-page
+      // preview; its fingerprint includes the just-saved pronunciation rules.
+      if(state?.querySelector('audio')&&pageButton&&!pageButton.disabled){
+        const count=pronunciationReview.hits;
+        stopPronunciationReview();
+        pageButton.click();
+        if(typeof toast==='function'&&count>1)toast(`读音规则已命中本页 ${count} 处，正在试听整页`);
+      }
+    });
+    pronunciationReview.observer.observe(document.documentElement,{childList:true,subtree:true});
+    pronunciationReview.timeout=setTimeout(stopPronunciationReview,180000);
+  }
+  document.addEventListener('click',e=>{
+    const button=e.target.closest?.('#savePronunciation');
+    if(!button)return;
+    const source=document.getElementById('pronunciationSource')?.value?.trim()||'';
+    if(source)armPronunciationReview(source);
+  },true);
+  const pronunciationUiObserver=new MutationObserver(patchPronunciationReview);
+  pronunciationUiObserver.observe(document.documentElement,{childList:true,subtree:true});
+  patchPronunciationReview();
+
   const baseDashboard=renderDashboard;
   renderDashboard=async function(){
     await baseDashboard();
