@@ -333,7 +333,7 @@ def claim_page_task(db: Session, *, node_id: str) -> TaskLease | None:
         status="running",
         progress=0,
         stage="claimed",
-        metrics_json="{}",
+        metrics_json=json.dumps({"_progress_at": now.isoformat()}, ensure_ascii=False, sort_keys=True),
         claimed_at=now,
         lease_expires_at=expiry,
         last_renewed_at=now,
@@ -452,14 +452,16 @@ def report_progress(
         node_id=node_id,
         lease_token=lease_token,
     )
+    now = utcnow()
     value = max(0, min(99, int(progress)))
     task.progress = value
     task.stage = str(stage or "running")[:80]
     attempt.progress = value
     attempt.stage = task.stage
-    if metrics is not None:
-        attempt.metrics_json = json.dumps(metrics, ensure_ascii=False, sort_keys=True)
-    node.last_seen_at = utcnow()
+    progress_metrics = dict(metrics or {})
+    progress_metrics["_progress_at"] = now.isoformat()
+    attempt.metrics_json = json.dumps(progress_metrics, ensure_ascii=False, sort_keys=True)
+    node.last_seen_at = now
     db.flush()
 
 
@@ -624,6 +626,59 @@ def fail_page_task(
     )
     db.flush()
     return retried
+
+
+def _attempt_progress_at(attempt: RenderAttempt) -> datetime:
+    payload = _json(attempt.metrics_json, {})
+    raw = payload.get("_progress_at") if isinstance(payload, dict) else None
+    if raw:
+        try:
+            value = datetime.fromisoformat(str(raw))
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    claimed = attempt.claimed_at
+    return claimed if claimed.tzinfo else claimed.replace(tzinfo=timezone.utc)
+
+
+def reap_stalled_page_attempts(db: Session) -> int:
+    """Retry workers that renew leases but make no stage progress for too long."""
+
+    now = utcnow()
+    cutoff = now - timedelta(seconds=max(60, saas_settings.distributed_stall_seconds))
+    tasks = db.scalars(
+        select(RenderSubtask)
+        .where(
+            RenderSubtask.task_type == "page",
+            RenderSubtask.status == "running",
+            RenderSubtask.active_attempt_id.is_not(None),
+        )
+        .with_for_update(skip_locked=True)
+    ).all()
+    recovered = 0
+    for task in tasks:
+        attempt = db.get(RenderAttempt, task.active_attempt_id) if task.active_attempt_id else None
+        node = db.get(WorkerNode, task.assigned_node_id) if task.assigned_node_id else None
+        if attempt is None or node is None or attempt.status != "running":
+            continue
+        if _attempt_progress_at(attempt) > cutoff:
+            continue
+        error = (
+            f"worker made no stage progress for {max(60, saas_settings.distributed_stall_seconds)} seconds "
+            f"(stage={attempt.stage}, progress={attempt.progress})"
+        )
+        retried = _retry_or_fail(
+            db,
+            task=task,
+            attempt=attempt,
+            node=node,
+            error=error,
+            retryable=True,
+        )
+        if retried or task.status == "failed":
+            recovered += 1
+    db.flush()
+    return recovered
 
 
 def reap_expired_page_leases(db: Session) -> int:
