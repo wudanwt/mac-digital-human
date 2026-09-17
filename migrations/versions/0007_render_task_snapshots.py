@@ -29,12 +29,7 @@ def upgrade() -> None:
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column(
-            "course_id",
-            sa.String(length=32),
-            sa.ForeignKey("courses.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
+        sa.Column("course_id", sa.String(length=32), nullable=False),
         sa.Column("schema_version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("snapshot_hash", sa.String(length=64), nullable=False),
         sa.Column("snapshot_json", sa.Text(), nullable=False),
