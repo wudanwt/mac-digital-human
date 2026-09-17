@@ -300,10 +300,17 @@ def worker_heartbeat(
     min_free = saas_settings.distributed_min_disk_free_gb * 1024**3
     disk_blocked = body.disk_free_bytes is not None and body.disk_free_bytes < min_free
     if disk_blocked:
-        node.accepting_tasks = False
+        # Disk pressure is an automatic eligibility gate, not an operator drain.
+        # Keep accepting_tasks unchanged so the same worker can recover
+        # automatically once cleanup restores the configured free-space margin.
         node.status = "disk_low"
         node.last_error = node.last_error or f"disk free below {saas_settings.distributed_min_disk_free_gb} GB"
     elif node.status not in {"incompatible", "revoked"}:
+        # Older workers may have been auto-drained by the previous disk-low
+        # behavior. A node still marked disk_low was not explicitly drained, so
+        # restore its automatic acceptance when free space is healthy again.
+        if node.status == "disk_low" and not node.accepting_tasks:
+            node.accepting_tasks = True
         node.status = "busy" if node.slots_busy else ("online" if node.accepting_tasks else "draining")
     db.commit()
     return {"worker": _serialize_node(node), "server_time": _now().isoformat()}
