@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -15,13 +16,11 @@ from sqlalchemy import select
 
 from ..composer import CourseComposer, media_duration
 from ..config import settings
-from ..ppt import PresentationParser, PPTRenderer
-from ..subtitles import SubtitleItem, SubtitlesGenerator
 from .database import SessionLocal
 from .domain import JobStatus, RenderJob
 from .models import Asset, Course, RenderJobRecord
 from .queue import job_queue
-from .render_core import RenderWorkspace, build_page_plans
+from .render_core import RenderWorkspace, execute_page, finalize_course, prepare_course
 from .render_snapshot_service import resolve_render_inputs
 from .services import enforce_storage_limit, reconcile_render_seconds, refund_render_seconds
 from .settings import saas_settings
@@ -88,12 +87,7 @@ def _preferred_h264_encoder() -> str:
 
 
 def _apply_ai_label(source: Path) -> Path:
-    """Apply a visible AI badge without relying on FFmpeg's optional drawtext filter.
-
-    Homebrew/third-party FFmpeg builds may omit ``drawtext``.  We render the badge
-    with Pillow and use the universally available overlay filter instead.  Audio
-    and an existing mov_text subtitle stream are preserved.
-    """
+    """Apply a visible AI badge without relying on FFmpeg's optional drawtext filter."""
     if not saas_settings.require_ai_label:
         return source
 
@@ -206,30 +200,45 @@ class LocalMLXCourseHandler:
         ref_asset = inputs.ref_asset
         direct_audio = inputs.direct_audio
         voice = inputs.voice
-        script_entries = inputs.script_entries
         settings_payload = inputs.settings_payload
 
         workspace = RenderWorkspace.create(settings.workspace_dir / "saas-workers" / job.id)
         work = workspace.root
-        slide_dir = workspace.slide_dir
         audio_dir = workspace.audio_dir
-        segment_dir = workspace.segment_dir
 
         ppt_path = _materialize(ppt_asset, work)
         master_path = _materialize(master_asset, work)
         ref_path = _materialize(ref_asset, work) if ref_asset else None
         direct_audio_path = _materialize(direct_audio, work) if direct_audio else None
 
-        deck = PresentationParser.parse(ppt_path)
-        total = max(1, len(deck.slides))
-        plans = build_page_plans(deck, script_entries, settings_payload)
+        if progress:
+            progress(
+                6,
+                "ppt_parse",
+                {
+                    "stage": 1,
+                    "stage_name": "课件解析与底板生成",
+                    "current_slide": 0,
+                    "step_detail": "正在解析课件并准备页面底板",
+                    "immutable_inputs": inputs.immutable,
+                    "snapshot_hash": (inputs.snapshot or {}).get("snapshot_hash"),
+                },
+            )
+        prepared = prepare_course(
+            ppt_path=ppt_path,
+            workspace=workspace,
+            script_entries=inputs.script_entries,
+            settings_payload=settings_payload,
+        )
+        plans = list(prepared.plans)
+        total = max(1, len(plans))
         runtime: dict[str, Any] = {
             "stage": 1,
             "stage_name": "课件解析与底板生成",
             "current_slide": 0,
-            "total_slides": len(deck.slides),
-            "step_detail": "准备渲染高清幻灯片底板",
-            "elapsed_seconds": 0.0,
+            "total_slides": len(plans),
+            "step_detail": "PPT 底板已就绪",
+            "elapsed_seconds": round(time.time() - render_started, 1),
             "eta_seconds": None,
             "immutable_inputs": inputs.immutable,
             "snapshot_hash": (inputs.snapshot or {}).get("snapshot_hash"),
@@ -266,8 +275,6 @@ class LocalMLXCourseHandler:
             if progress:
                 progress(value, stage_slug, _copy_runtime(runtime))
 
-        emit(6, "ppt_parse", stage=1, stage_name="课件解析与底板生成", detail=f"正在渲染 {len(deck.slides)} 页 PPT")
-        PPTRenderer.render_deck(deck, slide_dir)
         emit(10, "ppt_ready", stage=1, stage_name="课件解析与底板生成", detail="PPT 底板已就绪")
 
         tts_runtime = None
@@ -285,19 +292,19 @@ class LocalMLXCourseHandler:
                 )
 
         def make_audio(plan) -> Path:
-            slide = plan.slide
-            override = plan.override
-            target = audio_dir / f"{slide.index:03d}.wav"
-            slide_audio_asset_id = override.get("audio_asset_id")
+            target = audio_dir / f"{plan.index:03d}.wav"
+            slide_audio_asset_id = plan.override.get("audio_asset_id")
             if slide_audio_asset_id:
                 with SessionLocal() as db:
                     item = _asset(db, job.tenant_id, str(slide_audio_asset_id))
                     if item is None:
-                        raise RuntimeError(f"audio asset missing for slide {slide.index}")
+                        raise RuntimeError(f"audio asset missing for slide {plan.index}")
                     _assert_snapshot_asset(inputs.snapshot, item)
                     source = _materialize(item, work)
+                plan.override["audio_source"] = "provided"
                 return normalize_external_audio(source, target)
             if direct_audio_path is not None and len(plans) == 1:
+                plan.override["audio_source"] = "provided"
                 return normalize_external_audio(direct_audio_path, target)
 
             frozen_preview_id = inputs.preview_audio_by_slide.get(plan.index)
@@ -305,7 +312,7 @@ class LocalMLXCourseHandler:
                 with SessionLocal() as db:
                     preview_asset = _asset(db, job.tenant_id, frozen_preview_id)
                     if preview_asset is None:
-                        raise RuntimeError(f"frozen speech preview missing for slide {slide.index}")
+                        raise RuntimeError(f"frozen speech preview missing for slide {plan.index}")
                     _assert_snapshot_asset(inputs.snapshot, preview_asset)
                     object_store.materialize(preview_asset.object_key, target)
                 plan.override["audio_source"] = "speech_preview"
@@ -319,7 +326,7 @@ class LocalMLXCourseHandler:
                         db,
                         tenant_id=job.tenant_id,
                         course_id=course_id,
-                        slide_index=slide.index,
+                        slide_index=plan.index,
                         text=plan.narration,
                         voice=voice,
                         course_settings=settings_payload,
@@ -332,7 +339,7 @@ class LocalMLXCourseHandler:
                             target.unlink(missing_ok=True)
                             log.warning(
                                 "Speech preview cache unavailable; synthesizing slide=%s asset=%s error=%s",
-                                slide.index,
+                                plan.index,
                                 preview_asset.id,
                                 exc,
                             )
@@ -342,141 +349,95 @@ class LocalMLXCourseHandler:
             plan.override["audio_source"] = "synthesized"
             return synthesize_course_audio(tts_runtime, plan.narration, target)
 
-        clips: list[Path] = []
-        subtitle_items: list[SubtitleItem] = []
-        cursor = 0.0
-        subtitle_index = 1
+        results = []
         prefetch_enabled = bool(runtime["tts_prefetch"]) and len(plans) > 1
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="saas-tts") if prefetch_enabled else None
         audio_future: Future[Path] | None = executor.submit(make_audio, plans[0]) if executor and plans else None
 
         try:
             for pos, plan in enumerate(plans, start=1):
-                slide = plan.slide
-                override = plan.override
-                slide_state = runtime["slides"][str(slide.index)]
+                slide_state = runtime["slides"][str(plan.index)]
                 slide_state["audio"] = "running"
                 emit(
                     10 + int((pos - 1) / total * 70),
-                    f"slide_{slide.index}_tts",
+                    f"slide_{plan.index}_tts",
                     stage=2,
                     stage_name="逐页高保真语音合成",
-                    current_slide=slide.index,
-                    detail=f"正在生成第 {slide.index} 页语音（{len(plan.narration)} 字）",
+                    current_slide=plan.index,
+                    detail=f"正在生成第 {plan.index} 页语音（{len(plan.narration)} 字）",
                 )
                 audio_started = time.time()
                 if audio_future is not None:
                     audio_path = audio_future.result()
                 else:
                     audio_path = make_audio(plan)
-                duration = media_duration(audio_path)
+                audio_elapsed = time.time() - audio_started
+                audio_source = str(plan.override.get("audio_source") or "provided")
                 slide_state["audio"] = "done"
-                slide_state["audio_seconds"] = round(duration, 2)
-                slide_state["tts_elapsed_seconds"] = round(time.time() - audio_started, 2)
-                slide_state["audio_source"] = override.get("audio_source", "provided")
+                slide_state["audio_source"] = audio_source
 
-                # Legacy whole-course mode can still prefetch page N+1 TTS while
-                # page N is in MuseTalk. Distributed page workers disable this
-                # with SAAS_TTS_PREFETCH=0 and execute one page per compute slot.
+                # Legacy whole-course mode may prefetch page N+1. Distributed
+                # workers later disable this and run one leased page per slot.
                 next_future: Future[Path] | None = None
                 if executor and pos < len(plans):
                     next_future = executor.submit(make_audio, plans[pos])
 
-                layout = plan.layout
-                avatar_video: Path | None = None
-                if layout != "full_slide":
-                    slide_state["video"] = "running"
-                    emit(
-                        18 + int((pos - 1) / total * 70),
-                        f"slide_{slide.index}_avatar",
-                        stage=3,
-                        stage_name="数字人视频渲染",
-                        current_slide=slide.index,
-                        detail=f"正在生成第 {slide.index} 页数字人口型（音频 {duration:.1f}s）",
-                    )
-                    video_started = time.time()
-                    result = self.avatar_engine.render(
-                        video=master_path,
-                        audio=audio_path,
-                        job_id=f"{job.id}-slide-{slide.index}",
-                        master_cache_key=f"{job.tenant_id}:{master_asset.id}:{master_asset.sha256 or _sha256(master_path)}",
-                    )
-                    avatar_video = Path(result.output)
-                    slide_state["video"] = "done"
-                    slide_state["render_seconds"] = round(time.time() - video_started, 2)
-                    slide_state["musetalk"] = result.metadata.get("resident_runtime") if result.metadata else None
-                else:
-                    slide_state["video"] = "skipped"
+                def page_stage(name: str, detail: dict[str, Any]) -> None:
+                    if name == "audio_done":
+                        slide_state["audio_seconds"] = round(float(detail.get("audio_seconds") or 0), 2)
+                        return
+                    if name == "video_start":
+                        slide_state["video"] = "running"
+                        emit(
+                            18 + int((pos - 1) / total * 70),
+                            f"slide_{plan.index}_avatar",
+                            stage=3,
+                            stage_name="数字人视频渲染",
+                            current_slide=plan.index,
+                            detail=f"正在生成第 {plan.index} 页数字人口型（音频 {float(detail.get('audio_seconds') or 0):.1f}s）",
+                        )
+                    elif name == "video_done":
+                        slide_state["video"] = "done"
+                        slide_state["render_seconds"] = round(float(detail.get("render_seconds") or 0), 2)
+                        metadata = detail.get("metadata") or {}
+                        slide_state["musetalk"] = metadata.get("resident_runtime") if isinstance(metadata, dict) else None
+                    elif name == "video_skipped":
+                        slide_state["video"] = "skipped"
+                    elif name == "compose_start":
+                        slide_state["compose"] = "running"
+                        emit(
+                            22 + int((pos - 1) / total * 70),
+                            f"slide_{plan.index}_compose",
+                            stage=4,
+                            stage_name="逐页画面排版",
+                            current_slide=plan.index,
+                            detail=f"正在合成第 {plan.index} 页画面",
+                        )
+                    elif name == "compose_done":
+                        slide_state["compose"] = "done"
 
-                slide_state["compose"] = "running"
-                emit(
-                    22 + int((pos - 1) / total * 70),
-                    f"slide_{slide.index}_compose",
-                    stage=4,
-                    stage_name="逐页画面排版",
-                    current_slide=slide.index,
-                    detail=f"正在合成第 {slide.index} 页画面",
+                result = execute_page(
+                    plan=plan,
+                    workspace=workspace,
+                    prepare_audio=make_audio,
+                    avatar_engine=self.avatar_engine,
+                    composer=self.composer,
+                    master_path=master_path,
+                    master_cache_key=f"{job.tenant_id}:{master_asset.id}:{master_asset.sha256 or _sha256(master_path)}",
+                    job_id=job.id,
+                    settings_payload=settings_payload,
+                    prepared_audio=audio_path,
+                    prepared_audio_source=audio_source,
+                    on_stage=page_stage,
                 )
-                slide_image = slide_dir / f"slide-{slide.index}.png"
-                if not slide_image.exists():
-                    alternatives = sorted(slide_dir.glob(f"*{slide.index}*.png"))
-                    if alternatives:
-                        slide_image = alternatives[0]
-                target = segment_dir / f"{slide.index:03d}.mp4"
-                self.composer.compose_segment_layout(
-                    avatar_video=avatar_video,
-                    audio=audio_path,
-                    slide_image=slide_image,
-                    layout=layout,
-                    target=target,
-                    pip_position=str(override.get("pip_position") or settings_payload.get("pip_position") or "bottom_right"),
-                    pip_size=str(override.get("pip_size") or settings_payload.get("pip_size") or "medium"),
-                    custom_bg=override.get("custom_bg") or settings_payload.get("custom_bg"),
-                    bg_blur=bool(override.get("bg_blur", settings_payload.get("bg_blur", False))),
-                    pip_box=override.get("pip_box") or settings_payload.get("pip_box"),
-                    ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
-                )
-                slide_state["compose"] = "done"
-                clips.append(target)
-
-                segment_subs = SubtitlesGenerator.generate_segment_subtitles(
-                    text=plan.narration,
-                    duration=duration,
-                    start_offset=cursor,
-                    start_index=subtitle_index,
-                )
-                subtitle_items.extend(segment_subs)
-                cursor += duration
-                subtitle_index += len(segment_subs)
+                result = replace(result, tts_elapsed_seconds=audio_elapsed, audio_source=audio_source)
+                slide_state["audio_seconds"] = round(result.audio_seconds, 2)
+                slide_state["tts_elapsed_seconds"] = round(audio_elapsed, 2)
+                results.append(result)
                 audio_future = next_future
 
-            emit(88, "concat", stage=4, stage_name="全片拼接与字幕", detail="正在拼接全部页面")
-            raw_output = work / "course.mp4"
-            self.composer.concat(clips, raw_output, work / "concat")
-            srt = SubtitlesGenerator.build_srt_file(subtitle_items, work / "course.srt")
-            SubtitlesGenerator.build_vtt_file(subtitle_items, work / "course.vtt")
-            output = work / "result.mp4"
-
-            # The studio's subtitle toggle historically wrote embed_subtitles.
-            # Treat it as the user's intent to show subtitles, but use the mature
-            # local hard-subtitle pipeline by default.  A soft track remains
-            # available explicitly via subtitle_mode=soft.
-            show_subtitles = bool(settings_payload.get("embed_subtitles", settings_payload.get("burn_subtitles", True)))
-            subtitle_mode = str(settings_payload.get("subtitle_mode") or "burn").lower()
-            if show_subtitles and subtitle_items:
-                emit(93, "subtitles", stage=4, stage_name="全片拼接与字幕", detail="正在压制中文字幕")
-                if subtitle_mode == "soft":
-                    self.composer.embed_subtitles(raw_output, srt, output)
-                else:
-                    self.composer.burn_in_subtitles(
-                        video_path=raw_output,
-                        srt_path=srt,
-                        output_path=output,
-                        font_size=int(settings_payload.get("subtitle_font_size") or 34),
-                        margin_bottom=int(settings_payload.get("subtitle_margin_bottom") or 42),
-                    )
-            else:
-                output = raw_output
+            emit(88, "concat", stage=4, stage_name="全片拼接与字幕", detail="正在拼接全部页面并生成字幕时间轴")
+            output = finalize_course(prepared=prepared, results=results, composer=self.composer)
             emit(95, "postprocess", stage=4, stage_name="后处理", detail="课程主体生成完成，准备 AI 标识与上传")
             return output
         finally:
