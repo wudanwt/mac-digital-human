@@ -45,7 +45,7 @@ mkdir -p "$REMOTE_WORKER_CACHE_DIR" "$ROOT/workspace" "$ROOT/outputs"
 
 if ! "$PYTHON_BIN" -c "import httpx, psutil, sqlalchemy" >/dev/null 2>&1; then
   echo "Remote worker dependencies are missing." >&2
-  echo "Install with: uv pip install --python \"$PYTHON_BIN\" -e '.[saas,matting]'" >&2
+  echo "Install with: uv pip install --python \"$PYTHON_BIN\" -e '.[saas,matting,cosyvoice]'" >&2
   exit 2
 fi
 
