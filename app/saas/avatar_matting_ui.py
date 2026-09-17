@@ -13,7 +13,7 @@ CSS = r'''
 
 JS = r'''
 (() => {
-  const state={statuses:new Map(),loading:false,timer:null,urls:[],patched:new WeakSet()};
+  const state={statuses:new Map(),loading:false,timer:null,urls:[]};
   const nativeFetch=window.fetch.bind(window);
   const digitalHumanSave=/\/api\/saas\/digital-humans(?:\/([^/?]+))?$/;
 
@@ -46,10 +46,11 @@ JS = r'''
     if(s.status==='canceled')return ['已取消','failed'];
     return [String(s.status||'未知'),''];
   }
-  function panelHtml(id,s){
+  function stateKey(s){return encodeURIComponent(JSON.stringify([s?.status,s?.progress,s?.stage,s?.error,s?.transparent_ready,s?.model,s?.metadata?.frames,s?.poster_asset?.id||s?.poster_asset?.download_url,s?.white_preview_asset?.id||s?.white_preview_asset?.download_url]))}
+  function panelHtml(id,s,key=stateKey(s)){
     const [label,cls]=statusLabel(s),progress=Math.max(0,Math.min(100,Number(s?.progress||0))),ready=Boolean(s?.transparent_ready);
     const meta=s?.metadata||{},frames=meta.frames?`${meta.frames} 帧`:'';
-    return `<div class="dh-matte-panel" data-dh-matte-panel="${id}">
+    return `<div class="dh-matte-panel" data-dh-matte-panel="${id}" data-dh-matte-state="${key}">
       <div class="dh-matte-head"><div><b>透明讲师资产</b><small>母版只抠像一次，课程生成直接复用 Alpha，不会重复做人像分割。</small></div><span class="dh-matte-badge ${cls}">${esc2(label)}</span></div>
       ${(s?.status==='queued'||s?.status==='running')?`<div class="dh-matte-progress"><i style="width:${progress}%"></i></div><div class="dh-matte-meta"><span>${esc2(s.stage||'处理中')}</span><span>${progress}%</span></div>`:''}
       ${ready?`<div class="dh-matte-meta"><span>${esc2(s.model||'')}</span><span>${frames}</span></div>`:''}
@@ -64,16 +65,27 @@ JS = r'''
   }
 
   function findCard(id){return document.querySelector(`[data-dh-edit="${CSS.escape(id)}"]`)?.closest('.card')||null}
-  function wirePanel(card,id,s){
-    card.querySelector(`[data-dh-matte-start="${CSS.escape(id)}"]`)?.addEventListener('click',async e=>{e.stopPropagation();try{const out=await api('/avatar-matting/'+id+'/ensure',{method:'POST'});state.statuses.set(id,out);patchCards();startPolling()}catch(err){toast(err.message)}});
-    card.querySelector(`[data-dh-matte-rebuild="${CSS.escape(id)}"]`)?.addEventListener('click',async e=>{e.stopPropagation();if(!confirm('重新生成透明资产？旧成片不受影响。'))return;try{const out=await api('/avatar-matting/'+id+'/rebuild',{method:'POST'});state.statuses.set(id,out);patchCards();startPolling()}catch(err){toast(err.message)}});
-    card.querySelector(`[data-dh-matte-cutout="${CSS.escape(id)}"]`)?.addEventListener('click',async e=>{e.stopPropagation();try{cleanupUrls();const url=await blobUrl(s.poster_asset.download_url);openModal(`<div class="modal-head"><div><h2>透明讲师预览</h2><div class="muted">棋盘格区域表示真正透明，课程里会直接叠加到 PPT / 背景上。</div></div><button class="iconbtn" data-close>×</button></div><div class="dh-cutout-stage" style="margin-top:14px"><img src="${url}" alt="透明讲师预览"></div>`);document.querySelector('#modalRoot [data-close]')?.addEventListener('click',()=>{cleanupUrls();closeModal()})}catch(err){toast(err.message)}});
-    card.querySelector(`[data-dh-matte-white="${CSS.escape(id)}"]`)?.addEventListener('click',async e=>{e.stopPropagation();try{cleanupUrls();const url=await blobUrl(s.white_preview_asset.download_url);openModal(`<div class="modal-head"><div><h2>白底讲师预览</h2><div class="muted">这是同一套 Alpha 在纯白背景上的质检效果。</div></div><button class="iconbtn" data-close>×</button></div><video class="dh-white-preview" src="${url}" controls autoplay loop muted style="margin-top:14px"></video>`);document.querySelector('#modalRoot [data-close]')?.addEventListener('click',()=>{cleanupUrls();closeModal()})}catch(err){toast(err.message)}});
-  }
 
   function patchCards(){
-    for(const [id,s] of state.statuses){const card=findCard(id);if(!card)continue;const existing=card.querySelector('[data-dh-matte-panel]');const actions=card.querySelector('.actions');const html=panelHtml(id,s);if(existing){const holder=document.createElement('div');holder.innerHTML=html;existing.replaceWith(holder.firstElementChild)}else if(actions){actions.insertAdjacentHTML('beforebegin',html)}else{card.lastElementChild?.insertAdjacentHTML('beforeend',html)}wirePanel(card,id,s)}
+    for(const [id,s] of state.statuses){const card=findCard(id);if(!card)continue;const existing=card.querySelector('[data-dh-matte-panel]'),key=stateKey(s);if(existing?.dataset.dhMatteState===key)continue;const actions=card.querySelector('.actions');const html=panelHtml(id,s,key);if(existing){const holder=document.createElement('div');holder.innerHTML=html;existing.replaceWith(holder.firstElementChild)}else if(actions){actions.insertAdjacentHTML('beforebegin',html)}else{card.lastElementChild?.insertAdjacentHTML('beforeend',html)}}
   }
+
+  document.addEventListener('click',async e=>{
+    const button=e.target.closest?.('[data-dh-matte-start],[data-dh-matte-rebuild],[data-dh-matte-cutout],[data-dh-matte-white]');if(!button||button.dataset.dhBusy==='1')return;
+    e.preventDefault();e.stopPropagation();
+    const originalText=button.textContent,id=button.dataset.dhMatteStart||button.dataset.dhMatteRebuild||button.dataset.dhMatteCutout||button.dataset.dhMatteWhite,s=state.statuses.get(id);
+    try{
+      if(button.dataset.dhMatteStart!==undefined||button.dataset.dhMatteRebuild!==undefined){
+        const rebuild=button.dataset.dhMatteRebuild!==undefined;if(rebuild&&!confirm('重新生成透明资产？旧成片不受影响。'))return;
+        button.dataset.dhBusy='1';button.disabled=true;button.textContent='正在提交...';
+        const out=await api('/avatar-matting/'+id+(rebuild?'/rebuild':'/ensure'),{method:'POST'});state.statuses.set(id,out);patchCards();startPolling();toast(rebuild?'已重新加入抠像队列':'透明资产已加入处理队列');return;
+      }
+      button.dataset.dhBusy='1';button.disabled=true;cleanupUrls();
+      if(button.dataset.dhMatteCutout!==undefined){const url=await blobUrl(s.poster_asset.download_url);openModal(`<div class="modal-head"><div><h2>透明讲师预览</h2><div class="muted">棋盘格区域表示真正透明，课程里会直接叠加到 PPT / 背景上。</div></div><button class="iconbtn" data-close>×</button></div><div class="dh-cutout-stage" style="margin-top:14px"><img src="${url}" alt="透明讲师预览"></div>`)}
+      else{const url=await blobUrl(s.white_preview_asset.download_url);openModal(`<div class="modal-head"><div><h2>白底讲师预览</h2><div class="muted">这是同一套 Alpha 在纯白背景上的质检效果。</div></div><button class="iconbtn" data-close>×</button></div><video class="dh-white-preview" src="${url}" controls autoplay loop muted style="margin-top:14px"></video>`)}
+      document.querySelector('#modalRoot [data-close]')?.addEventListener('click',()=>{cleanupUrls();closeModal()});
+    }catch(err){toast(err.message)}finally{if(button.isConnected){button.disabled=false;button.textContent=originalText;delete button.dataset.dhBusy}}
+  },true);
 
   async function refreshStatuses(){
     if(state.loading||!document.querySelector('[data-dh-edit]'))return;state.loading=true;
@@ -81,9 +93,10 @@ JS = r'''
   }
   function stopPolling(){if(state.timer){clearTimeout(state.timer);state.timer=null}}
   function scheduleRefresh(ms=120){stopPolling();state.timer=setTimeout(()=>{state.timer=null;refreshStatuses()},ms)}
-  function startPolling(){stopPolling();state.timer=setTimeout(async()=>{state.timer=null;await refreshStatuses();if([...state.statuses.values()].some(s=>['queued','running'].includes(s.status)))startPolling()},2200)}
+  function startPolling(){if(state.timer)return;state.timer=setTimeout(async()=>{state.timer=null;await refreshStatuses();if([...state.statuses.values()].some(s=>['queued','running'].includes(s.status)))startPolling()},1200)}
 
-  const observer=new MutationObserver(()=>{if(document.querySelector('[data-dh-edit]'))scheduleRefresh(80)});observer.observe(document.documentElement,{childList:true,subtree:true});
+  function containsEditor(node){return node.nodeType===1&&(node.matches?.('[data-dh-edit]')||node.querySelector?.('[data-dh-edit]'))}
+  const observer=new MutationObserver(records=>{if(records.some(record=>[...record.addedNodes].some(containsEditor)))scheduleRefresh(80)});observer.observe(document.documentElement,{childList:true,subtree:true});
   if(document.querySelector('[data-dh-edit]'))refreshStatuses();
 })();
 '''

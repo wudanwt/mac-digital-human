@@ -13,6 +13,10 @@ def test_avatar_matting_ui_contains_asset_controls(tmp_path: Path) -> None:
     assert "透明预览" in JS
     assert "白底预览" in JS
     assert "重新抠像" in JS
+    assert "document.addEventListener('click'" in JS
+    assert "data-dh-matte-state" in JS
+    assert "record.addedNodes" in JS
+    assert "},1200)" in JS
 
     node = shutil.which("node")
     if node:

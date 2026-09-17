@@ -53,6 +53,11 @@ saas = [
 matting = [
   "rembg[cpu]>=2.0.67,<3",
   "opencv-python-headless>=4.10",
+  "torch>=2.3.0",
+  "torchvision>=0.18.0",
+  "transformers>=4.48",
+  "kornia>=0.7,<1",
+  "timm>=1,<2",
 ]
 dev = [
   "pytest>=8",

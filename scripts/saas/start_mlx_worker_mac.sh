@@ -57,8 +57,11 @@ export WORKER_BACKEND=redis
 export SAAS_RENDERER=mlx-local
 export STORAGE_BACKEND=local
 export STORAGE_LOCAL_ROOT="${SAAS_HOST_STORAGE_ROOT:-$ROOT/workspace/saas-assets}"
+export U2NET_HOME="${U2NET_HOME:-$ROOT/workspace/saas-matting-models}"
+export AVATAR_MATTING_BACKEND="${AVATAR_MATTING_BACKEND:-auto}"
+export AVATAR_MATTING_TORCH_MODEL_DIR="${AVATAR_MATTING_TORCH_MODEL_DIR:-$ROOT/workspace/saas-matting-models/pytorch/BiRefNet-portrait}"
 
-mkdir -p "$STORAGE_LOCAL_ROOT" "$ROOT/workspace" "$ROOT/outputs"
+mkdir -p "$STORAGE_LOCAL_ROOT" "$U2NET_HOME" "$ROOT/workspace" "$ROOT/outputs"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   if [[ "$PYTHON_BIN" == */* ]]; then
@@ -82,15 +85,16 @@ else
 fi
 
 echo "Mac MLX SaaS Worker"
-echo "  Database : $DATABASE_URL"
-echo "  Redis    : $REDIS_URL"
+echo "  Database : configured"
+echo "  Redis    : configured"
 echo "  Storage  : $STORAGE_LOCAL_ROOT"
 echo "  Queue    : ${SAAS_QUEUE_NAME:-avatar:render}:musetalk"
 echo "  Matting  : ${AVATAR_MATTING_MODEL:-birefnet-portrait}"
+echo "  Backend  : $AVATAR_MATTING_BACKEND"
 echo "  Python   : $PYTHON_BIN"
 echo
 
-if ! "$PYTHON_BIN" -c "import psycopg, redis, sqlalchemy, cv2, rembg" >/dev/null 2>&1; then
+if ! "$PYTHON_BIN" -c "import psycopg, redis, sqlalchemy, cv2, rembg, torch, torchvision, transformers" >/dev/null 2>&1; then
   echo "The selected Python environment is missing SaaS or portrait-matting dependencies." >&2
   echo "Install them with:" >&2
   echo "  uv pip install --python \"$PYTHON_BIN\" -e '.[saas,matting]'" >&2

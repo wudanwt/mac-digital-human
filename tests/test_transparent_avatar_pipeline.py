@@ -5,11 +5,14 @@ import shutil
 import subprocess
 
 import pytest
+import numpy as np
 from PIL import Image, ImageDraw
 
 from app.composer import ComposeConfig, media_duration
 from app.saas.avatar_alpha import AlphaCycleCache
 from app.saas.avatar_matting_ui import JS as avatar_matting_js
+from app.saas import avatar_matting_engine
+from app.saas.avatar_matting_engine import PortraitMattingEngine, _SceneForegroundRecovery
 from app.saas.course_avatar_mode_ui import JS as course_avatar_mode_js
 from app.saas.transparent_composer import TransparentCourseComposer
 from app.saas.worker_entry import BackgroundAwareMLXCourseHandler
@@ -50,6 +53,44 @@ def test_worker_requires_ready_alpha_for_transparent_or_white_modes() -> None:
     assert "white" in source
     assert "ready_matting_assets" in source
     assert "透明资产尚未处理完成" in source
+
+
+def test_matting_auto_backend_prefers_mps(monkeypatch, tmp_path) -> None:
+    sentinel = object()
+    monkeypatch.setenv("AVATAR_MATTING_BACKEND", "auto")
+    monkeypatch.setenv("AVATAR_MATTING_TORCH_MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(avatar_matting_engine, "_MPSMattingSession", lambda *_: sentinel)
+
+    assert PortraitMattingEngine()._new_session() is sentinel
+
+
+def test_matting_auto_backend_falls_back_to_onnx(monkeypatch, tmp_path) -> None:
+    sentinel = object()
+    monkeypatch.setenv("AVATAR_MATTING_BACKEND", "auto")
+    monkeypatch.setenv("AVATAR_MATTING_TORCH_MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        avatar_matting_engine,
+        "_MPSMattingSession",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("MPS unavailable")),
+    )
+    monkeypatch.setattr(avatar_matting_engine, "_OnnxMattingSession", lambda *_: sentinel)
+
+    assert PortraitMattingEngine()._new_session() is sentinel
+
+
+def test_scene_foreground_recovery_keeps_connected_podium() -> None:
+    rgb = np.full((160, 120, 3), 235, dtype=np.uint8)
+    rgb[35:125, 38:82] = (35, 55, 90)
+    rgb[112:, 8:112] = (105, 55, 25)
+    portrait = np.zeros((160, 120), dtype=np.uint8)
+    portrait[35:125, 38:82] = 255
+
+    recovery = _SceneForegroundRecovery(rgb, portrait)
+    fused = recovery.apply(rgb, portrait)
+
+    assert recovery.enabled is True
+    assert fused[140, 60] > 200
+    assert fused[15, 15] == 0
 
 
 def test_transparent_composer_executes_real_ffmpeg_overlay(tmp_path) -> None:
