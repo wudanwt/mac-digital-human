@@ -7,6 +7,7 @@ import pickle
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,7 @@ class ResidentMuseTalkRuntime:
         self.mlx_root = settings.musetalk_mlx_dir.resolve()
         self.upstream = settings.musetalk_upstream_dir.resolve()
         self._materials: dict[str, MasterMaterial] = {}
+        self.last_material_cache_status = "unprepared"
         self._batch_size: int | None = None
         self._load_runtime()
 
@@ -151,6 +153,7 @@ class ResidentMuseTalkRuntime:
     ) -> MasterMaterial:
         key = self._material_key(coords_file, extra_margin, parsing_mode)
         if key in self._materials:
+            self.last_material_cache_status = "memory"
             return self._materials[key]
 
         material_dir = cache_dir / f"resident-{self.variant}-m{extra_margin}-{parsing_mode}"
@@ -182,19 +185,27 @@ class ResidentMuseTalkRuntime:
                 cached_ok = False
 
         if cached_ok:
-            latents = np.load(latent_file, mmap_mode=None)
-            with blend_file.open("rb") as fh:
-                blend = pickle.load(fh)
-            material = MasterMaterial(
-                frame_paths=frame_paths,
-                boxes=blend["boxes"],
-                crop_boxes=blend["crop_boxes"],
-                masks=blend["masks"],
-                latents=latents,
-                fps=fps,
-            )
-            self._materials[key] = material
-            return material
+            try:
+                latents = np.load(latent_file, allow_pickle=False)
+                with blend_file.open("rb") as fh:
+                    blend = pickle.load(fh)
+                if (latents.ndim < 2 or latents.shape[0] != len(frame_paths)
+                        or latents.dtype != np.float16
+                        or any(len(blend[name]) != len(frame_paths) for name in ("boxes", "crop_boxes", "masks"))):
+                    raise ValueError("Incomplete MuseTalk resident material cache")
+                material = MasterMaterial(
+                    frame_paths=frame_paths,
+                    boxes=blend["boxes"],
+                    crop_boxes=blend["crop_boxes"],
+                    masks=blend["masks"],
+                    latents=latents,
+                    fps=fps,
+                )
+                self._materials[key] = material
+                self.last_material_cache_status = "disk"
+                return material
+            except (OSError, ValueError, KeyError, TypeError, pickle.PickleError):
+                pass
 
         boxes: list[tuple[int, int, int, int] | None] = []
         crop_boxes: list[tuple[int, int, int, int] | None] = []
@@ -223,14 +234,26 @@ class ResidentMuseTalkRuntime:
             crop_boxes.append(crop_box)
 
         latents = np.concatenate(latent_parts, axis=0).astype(np.float16, copy=False)
-        np.save(latent_file, latents, allow_pickle=False)
-        with blend_file.open("wb") as fh:
-            pickle.dump(
-                {"boxes": boxes, "crop_boxes": crop_boxes, "masks": masks},
-                fh,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-        manifest_file.write_text(json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8")
+        suffix = f".tmp-{uuid.uuid4().hex}"
+        latent_tmp = material_dir / f"latents-f16{suffix}.npy"
+        blend_tmp = material_dir / f"blend-material{suffix}.pkl"
+        manifest_tmp = material_dir / f"manifest{suffix}.json"
+        try:
+            np.save(latent_tmp, latents, allow_pickle=False)
+            with blend_tmp.open("wb") as fh:
+                pickle.dump(
+                    {"boxes": boxes, "crop_boxes": crop_boxes, "masks": masks},
+                    fh,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+            manifest_tmp.write_text(json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8")
+            manifest_file.unlink(missing_ok=True)
+            os.replace(latent_tmp, latent_file)
+            os.replace(blend_tmp, blend_file)
+            os.replace(manifest_tmp, manifest_file)
+        finally:
+            for path in (latent_tmp, blend_tmp, manifest_tmp):
+                path.unlink(missing_ok=True)
 
         material = MasterMaterial(
             frame_paths=frame_paths,
@@ -241,6 +264,7 @@ class ResidentMuseTalkRuntime:
             fps=fps,
         )
         self._materials[key] = material
+        self.last_material_cache_status = "built"
         return material
 
     def _batch_cache_file(self) -> Path:
@@ -332,8 +356,9 @@ class ResidentMuseTalkRuntime:
         output: Path,
         cache_dir: Path,
         log_file: Path | None = None,
+        prepared_material: MasterMaterial | None = None,
     ) -> dict[str, Any]:
-        material = self.prepare_master(coords_file, cache_dir)
+        material = prepared_material or self.prepare_master(coords_file, cache_dir)
         chunks = self.pipe.encode_audio_from_wav(audio, fps=int(round(material.fps)))
         frame_count = int(chunks.shape[0])
         if frame_count <= 0:
@@ -347,7 +372,7 @@ class ResidentMuseTalkRuntime:
         chunks = chunks.astype(self.mx.float16)
         batch_size = self.choose_batch_size(latents, chunks)
 
-        started = time.time()
+        started = time.perf_counter()
         try:
             recon = self.pipe.run_batched(latents, chunks, batch_size=batch_size)
         except Exception as first_exc:  # hardware safety fallback
@@ -370,6 +395,8 @@ class ResidentMuseTalkRuntime:
                     continue
             if recon is None:
                 raise EngineError(f"MuseTalk MLX inference failed: {first_exc}") from first_exc
+        inference_seconds = time.perf_counter() - started
+        encode_started = time.perf_counter()
 
         first_frame = self.cv2.imread(material.frame_paths[int(indices[0])])
         if first_frame is None:
@@ -409,13 +436,15 @@ class ResidentMuseTalkRuntime:
         return_code = proc.wait()
         if return_code != 0 or not output.exists():
             raise EngineError(stderr.strip() or f"FFmpeg frame pipeline failed ({return_code})")
+        blend_encode_seconds = time.perf_counter() - encode_started
 
         if log_file:
             with log_file.open("a", encoding="utf-8") as fh:
                 fh.write(
                     f"\n[resident-runtime] model_load={self.model_load_seconds:.2f}s "
                     f"frames={frame_count} batch={batch_size} encoder={encoder} "
-                    f"elapsed={time.time() - started:.2f}s\n"
+                    f"inference={inference_seconds:.2f}s blend_encode={blend_encode_seconds:.2f}s "
+                    f"elapsed={time.perf_counter() - started:.2f}s\n"
                 )
         return {
             "resident": True,
@@ -423,7 +452,9 @@ class ResidentMuseTalkRuntime:
             "encoder": encoder,
             "frames": frame_count,
             "model_load_seconds": round(self.model_load_seconds, 2),
-            "elapsed_seconds": round(time.time() - started, 2),
+            "inference_seconds": round(inference_seconds, 2),
+            "blend_encode_seconds": round(blend_encode_seconds, 2),
+            "elapsed_seconds": round(time.perf_counter() - started, 2),
         }
 
 

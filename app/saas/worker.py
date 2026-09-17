@@ -383,6 +383,7 @@ class LocalMLXCourseHandler:
                         video=master_path,
                         audio=audio_path,
                         job_id=f"{job.id}-slide-{slide.index}",
+                        master_cache_key=f"{job.tenant_id}:{master_asset.id}:{master_asset.sha256 or _sha256(master_path)}",
                     )
                     avatar_video = Path(result.output)
                     slide_state["video"] = "done"
