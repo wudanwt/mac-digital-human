@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .saas.api import router as saas_router
+from .saas.avatar_cards_ui import css_response as avatar_cards_css_response
 from .saas.avatar_matting_ui import css_response as avatar_matting_css_response
 from .saas.avatar_matting_ui import javascript_response as avatar_matting_javascript_response
 from .saas.avatar_ui import javascript_response as avatar_javascript_response
@@ -75,6 +76,7 @@ def _enhanced_dashboard() -> HTMLResponse:
     body = body.replace(
         "</head>",
         '<link rel="stylesheet" href="/saas-theme.css">'
+        '<link rel="stylesheet" href="/avatar-cards.css">'
         '<link rel="stylesheet" href="/avatar-matting.css">'
         '<link rel="stylesheet" href="/course-studio.css">'
         '<link rel="stylesheet" href="/course-studio-upgrade.css">'
@@ -105,6 +107,11 @@ def _enhanced_dashboard() -> HTMLResponse:
 @app.get("/saas-theme.css", include_in_schema=False)
 def saas_theme():
     return theme_css_response()
+
+
+@app.get("/avatar-cards.css", include_in_schema=False)
+def avatar_cards_css():
+    return avatar_cards_css_response()
 
 
 @app.get("/avatar-matting.css", include_in_schema=False)
