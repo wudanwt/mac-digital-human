@@ -311,7 +311,12 @@ def claim_page_task(db: Session, *, node_id: str) -> TaskLease | None:
     """
 
     now = utcnow()
-    node = db.scalar(select(WorkerNode).where(WorkerNode.id == node_id).with_for_update())
+    node = db.scalar(
+        select(WorkerNode)
+        .where(WorkerNode.id == node_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if node is None:
         raise SchedulerError("worker node not found")
     if not node.accepting_tasks:

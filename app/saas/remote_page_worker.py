@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +36,29 @@ from .worker_entry import (
 )
 
 log = logging.getLogger("digital-human.saas.remote-page-worker")
+
+
+@contextmanager
+def worker_instance_lock(cache_dir: Path):
+    """Keep one page-worker process per cache/model runtime on a Mac."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = cache_dir / ".remote-page-worker.lock"
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(f"another remote page worker is already running for {cache_dir}") from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 @dataclass(frozen=True)
@@ -851,7 +876,9 @@ class RemotePageWorker:
 
 def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    RemotePageWorker(RemoteWorkerConfig.from_env()).run_forever()
+    config = RemoteWorkerConfig.from_env()
+    with worker_instance_lock(config.cache_dir):
+        RemotePageWorker(config).run_forever()
 
 
 if __name__ == "__main__":

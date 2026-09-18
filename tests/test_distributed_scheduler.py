@@ -135,6 +135,23 @@ def test_page_leases_are_exclusive_and_release_finalize_after_last_page() -> Non
             db.commit()
             node_id = node.id
 
+        # Authentication may load the node before a concurrent claim commits.
+        # The locked claim query must refresh that stale identity-map value.
+        with SessionLocal() as stale_db:
+            stale_node = stale_db.get(WorkerNode, node_id)
+            assert stale_node is not None and stale_node.slots_busy == 0
+            with SessionLocal() as other_db:
+                busy_node = other_db.get(WorkerNode, node_id)
+                assert busy_node is not None
+                busy_node.slots_busy = 1
+                other_db.commit()
+            assert claim_page_task(stale_db, node_id=node_id) is None
+        with SessionLocal() as db:
+            node = db.get(WorkerNode, node_id)
+            assert node is not None
+            node.slots_busy = 0
+            db.commit()
+
         completed: list[int] = []
         for expected_index in (2, 3, 1):
             with SessionLocal() as db:

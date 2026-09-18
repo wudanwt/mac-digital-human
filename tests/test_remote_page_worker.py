@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 
 from app.saas import mlx_preflight
-from app.saas.remote_page_worker import RemoteApi, RemoteWorkerConfig
+from app.saas.remote_page_worker import RemoteApi, RemoteWorkerConfig, worker_instance_lock
 
 
 def _config(tmp_path: Path) -> RemoteWorkerConfig:
@@ -34,6 +35,16 @@ def test_remote_api_resolves_task_scoped_relative_urls(tmp_path: Path) -> None:
         assert api._resource_url("https://files.example.test/object") == "https://files.example.test/object"
     finally:
         api.close()
+
+
+def test_remote_worker_rejects_duplicate_process_for_same_cache(tmp_path: Path) -> None:
+    with worker_instance_lock(tmp_path):
+        with pytest.raises(RuntimeError, match="already running"):
+            with worker_instance_lock(tmp_path):
+                pass
+
+    with worker_instance_lock(tmp_path):
+        assert (tmp_path / ".remote-page-worker.lock").read_text().strip()
 
 
 def test_remote_preflight_uses_center_api_without_local_services(monkeypatch) -> None:
