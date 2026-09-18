@@ -16,7 +16,7 @@ JS = r'''
     admin:'<svg viewBox="0 0 24 24" fill="none"><path d="m12 3 8 4v5c0 4.7-3.2 7.6-8 9-4.8-1.4-8-4.3-8-9V7z" stroke-width="1.6"/><path d="m9 12 2 2 4-4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   };
   const navLabels={dashboard:'总览',courses:'课程',avatars:'数字人',assets:'素材',jobs:'任务',billing:'套餐',settings:'设置',admin:'运营'};
-  const stageLabels={queued:'等待调度',starting:'准备中',running:'生成中',mock_render:'模拟生成',mock_complete:'模拟完成',ppt_parse:'解析课件',uploading:'上传成片',succeeded:'生成完成',failed:'生成失败',canceled:'已取消',queue_failed:'队列异常'};
+  const stageLabels={queued:'等待调度',starting:'准备中',running:'生成中',mock_render:'模拟生成',mock_complete:'模拟完成',ppt_parse:'解析课件',uploading:'上传成片',succeeded:'生成完成',failed:'生成失败',canceled:'已取消',queue_failed:'队列异常',distributed_prepare:'课件准备',distributed_pages:'分页生成',distributed_finalize:'成片封装',waiting_avatar_matting:'等待抠像',page_failed:'页面失败'};
   const kindLabels={ppt:'课件',document:'文档',image:'图片',video:'视频',audio:'音频',background:'背景',output:'成片',other:'其他'};
 
   function decorateChrome(){
