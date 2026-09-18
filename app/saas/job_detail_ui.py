@@ -15,7 +15,14 @@ JS = r'''
   let resultVideoUrl=null;
   let jobsCache={at:0,items:[]};
   const safe=s=>typeof esc==='function'?esc(s):String(s??'');
-  const fmtSec=v=>v==null||v===''||Number.isNaN(Number(v))?'—':`${Number(v).toFixed(Number(v)>=10?0:1)}s`;
+  const fmtSec=v=>{
+    if(v==null||v===''||Number.isNaN(Number(v)))return '—';
+    const total=Math.max(0,Math.round(Number(v)));
+    if(total<60)return `${total}秒`;
+    const hours=Math.floor(total/3600),minutes=Math.floor((total%3600)/60),seconds=total%60;
+    if(hours)return `${hours}小时${minutes}分${seconds}秒`;
+    return `${minutes}分${seconds}秒`;
+  };
   const parseTime=v=>{const ms=Date.parse(v||'');return Number.isFinite(ms)?ms:null};
   const statusName=s=>({queued:'排队中',running:'生成中',succeeded:'已完成',failed:'失败',canceled:'已取消',pending:'等待',done:'完成',skipped:'跳过',blocked:'等待前置',retry_wait:'等待重试',audio_start:'语音合成',audio_done:'语音完成',video_start:'数字人驱动',video_done:'口型完成',video_skipped:'跳过口型',compose_start:'排版压制',compose_done:'本页合成完成',distributed_prepare:'课件准备',distributed_pages:'多机分页生成',distributed_finalize:'成片封装',waiting_avatar_matting:'等待透明资产',waiting_matting:'等待抠像',ppt_prepare:'解析课件',publishing_pages:'分发页面',materializing_pages:'汇总页面',concat:'拼接成片',publishing:'上传成片',completed:'完成',center_starting:'中心启动',page_failed:'页面失败'}[s]||s||'—');
 
@@ -84,6 +91,13 @@ JS = r'''
     section.innerHTML=`<div class="toolbar"><div><div class="label">RESULT PREVIEW</div><h2 style="margin:0">成片预览</h2></div><button class="secondary" data-job-download="${safe(assetId)}">下载成片</button></div><div data-job-video-preview><div class="job-preview-loading">正在加载成片…</div></div>`;
     shell.querySelector('.job-detail-layout')?.before(section);
     const headerDownload=shell.querySelector('.job-detail-top [data-job-download]');if(headerDownload)headerDownload.textContent='下载成片';
+  }
+
+  function clarifyTimeLabels(shell){
+    const label=[...shell.querySelectorAll('.job-detail-card .label')].find(item=>item.textContent.trim()==='ETA');
+    if(!label)return;
+    label.textContent='REMAINING';
+    const note=label.parentElement?.querySelector('.muted');if(note)note.textContent='预计剩余时间';
   }
 
   function stageClass(stage,n,status,actives){
@@ -262,6 +276,7 @@ JS = r'''
       const scroll=old?.querySelector('.job-detail-body')?.scrollTop||0;
       const holder=document.createElement('div');holder.innerHTML=renderShell(d);const fresh=holder.firstElementChild;
       if(old)old.replaceWith(fresh);else document.body.appendChild(fresh);
+      clarifyTimeLabels(fresh);
       if(d.output_asset_id){mountResultPreview(fresh,d.output_asset_id);hydrateResultVideo(d.output_asset_id)}
       const body=fresh.querySelector('.job-detail-body');if(body)body.scrollTop=scroll;
       if(['queued','running'].includes(d.status))detailTimer=setTimeout(()=>refreshDetail(id),1500);

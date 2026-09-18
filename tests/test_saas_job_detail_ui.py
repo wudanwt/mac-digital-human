@@ -43,6 +43,7 @@ def test_job_detail_javascript_consumes_distributed_tasks() -> None:
     assert "data-job-video-preview" in JS
     assert "hydrateResultVideo" in JS
     assert "Authorization:'Bearer '+token" in JS
+    assert "预计剩余时间" in JS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required to execute job-detail helpers")
@@ -212,10 +213,12 @@ def test_job_detail_javascript_fills_elapsed_and_eta_without_runtime(tmp_path: P
                 "const html = global.__jobDetail.renderShell(running);",
                 "const elapsedHtml = (html.match(/ELAPSED<\\/div><div class=\\\"metric\\\">([^<]+)/) || [])[1];",
                 "const etaHtml = (html.match(/ETA<\\/div><div class=\\\"metric\\\">([^<]+)/) || [])[1];",
-                "if (elapsedHtml !== '30s') throw new Error('missing elapsed 30s, got ' + elapsedHtml);",
+                "if (elapsedHtml !== '30秒') throw new Error('missing elapsed 30秒, got ' + elapsedHtml);",
                 "if (!etaHtml || etaHtml === '—') throw new Error('eta still empty: ' + etaHtml);",
                 "const doneElapsed = global.__jobDetail.elapsedSeconds(done);",
                 "if (Math.abs(doneElapsed - 150) > 0.01) throw new Error('expected 150s completed elapsed, got ' + doneElapsed);",
+                "const doneHtml = global.__jobDetail.renderShell(done);",
+                "if (!doneHtml.includes('2分30秒')) throw new Error('completed elapsed should use minutes and seconds');",
                 "if (global.__jobDetail.etaSeconds(done, doneElapsed) != null) throw new Error('completed jobs should not show eta');",
                 "console.log('ok');",
                 "process.exit(0);",
