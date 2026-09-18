@@ -38,11 +38,19 @@ from .worker_entry import (
 log = logging.getLogger("digital-human.saas.remote-page-worker")
 
 
+def worker_lock_path(cache_dir: Path) -> Path:
+    """Place the process lock outside the evictable content cache."""
+    resolved = cache_dir.expanduser().resolve()
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    return resolved.parent / ".remote-worker-locks" / f"{digest}.lock"
+
+
 @contextmanager
 def worker_instance_lock(cache_dir: Path):
     """Keep one page-worker process per cache/model runtime on a Mac."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = cache_dir / ".remote-page-worker.lock"
+    lock_path = worker_lock_path(cache_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
     try:
         try:
@@ -554,6 +562,18 @@ class RemotePageWorker:
         self.avatar_engine = ContextualMatteMuseTalkEngine(MuseTalkMLXEngine())
         self.composer = MatteAwareCourseComposer(CourseComposer().config)
 
+    @staticmethod
+    def _attempt_root() -> Path:
+        return app_settings.workspace_dir / "remote-page-worker"
+
+    def _cleanup_stale_attempt_workspaces(self) -> None:
+        root = self._attempt_root()
+        if not root.exists():
+            return
+        for path in root.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+
     def register(self) -> None:
         payload = self.api.register()
         log.info("Remote worker registered: %s", payload.get("worker", {}).get("id"))
@@ -802,6 +822,7 @@ class RemotePageWorker:
         self._current_task_id = task["id"]
         self._last_error = None
         started = time.time()
+        attempt_work = self._attempt_root() / task["attempt_id"]
         try:
             with LeaseKeeper(
                 self.api,
@@ -839,10 +860,14 @@ class RemotePageWorker:
                 log.warning("Unable to report task failure: %s", report_exc)
         finally:
             self._current_task_id = None
-            self.cache.release_all()
+            try:
+                self.cache.release_all()
+            finally:
+                shutil.rmtree(attempt_work, ignore_errors=True)
 
     def run_forever(self) -> None:
         self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_stale_attempt_workspaces()
         self.register()
         heartbeat = self.start_heartbeat()
         try:
@@ -854,6 +879,7 @@ class RemotePageWorker:
                     except Exception:
                         pass
                     self.cache.cleanup()
+                    self._cleanup_stale_attempt_workspaces()
                     time.sleep(5)
                     continue
                 self._last_error = None
