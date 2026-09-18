@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 
 from .account_api import router as account_router
@@ -8,6 +8,7 @@ from .admin_api import router as admin_router
 from .assets_api import router as assets_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
+from .avatar_matting_api import router as avatar_matting_router
 from .backgrounds_api import router as backgrounds_router
 from .billing_api import router as billing_router
 from .compliance_api import admin_router as admin_compliance_router
@@ -15,7 +16,10 @@ from .compliance_api import router as compliance_router
 from .course_tools_api import router as course_tools_router
 from .database import engine
 from .digital_human_api import router as digital_human_router
+from .distributed_worker_api import admin_router as distributed_worker_admin_router
+from .distributed_worker_api import internal_router as distributed_worker_internal_router
 from .job_detail_api import router as job_detail_router
+from .security import require_superuser
 from .settings import saas_settings
 from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
@@ -83,6 +87,9 @@ def capabilities() -> dict:
         "digital_human_assets": True,
         "digital_human_direct_upload": True,
         "browser_voice_recording": True,
+        "avatar_transparent_assets": True,
+        "avatar_white_preview": True,
+        "course_avatar_modes": ["transparent", "white", "original"],
         "avatars": True,
         "voice_profiles": True,
         "courses": True,
@@ -94,8 +101,16 @@ def capabilities() -> dict:
         "render_job_slide_detail": True,
         "engine_isolated_queues": True,
         "worker_heartbeat": True,
+        "distributed_page_rendering": saas_settings.distributed_render_enabled,
+        "distributed_worker_auth": True,
+        "distributed_worker_leases": True,
+        "distributed_range_download": True,
+        "distributed_resumable_upload": True,
+        "render_contract_version": saas_settings.render_contract_version,
         "resident_musetalk_runtime": True,
         "tts_video_prefetch": True,
+        "course_speech_preview": True,
+        "course_pronunciation_corrections": True,
         "usage_quota": True,
         "plans": True,
         "admin": True,
@@ -108,18 +123,29 @@ def capabilities() -> dict:
     }
 
 
+# Worker-node credentials control shared render infrastructure rather than a
+# single tenant. Provisioning, draining and revocation therefore require the
+# platform superuser role even though the router also keeps its local admin
+# checks for defense in depth.
+router.include_router(
+    distributed_worker_admin_router,
+    dependencies=[Depends(require_superuser)],
+)
+
 for child in (
     auth_router,
     account_router,
     workspace_router,
     assets_router,
     digital_human_router,
+    avatar_matting_router,
     voice_router,
     avatar_router,
     course_router,
     course_tools_router,
     backgrounds_router,
     worker_status_router,
+    distributed_worker_internal_router,
     job_detail_router,
     job_router,
     dashboard_router,

@@ -9,10 +9,6 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 2
 fi
 
-# Load .env.saas as dotenv data, not as shell source code.
-# Docker-style .env files legitimately allow unquoted values containing spaces
-# (for example: SAAS_APP_NAME=Digital Human SaaS Studio), which `source` cannot.
-# Existing shell environment variables always win over values from the file.
 load_dotenv() {
   local file="$1" line key value first last
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -31,7 +27,6 @@ load_dotenv() {
 
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
 
-    # Remove one matching pair of surrounding quotes without evaluating the value.
     if [[ ${#value} -ge 2 ]]; then
       first="${value:0:1}"
       last="${value: -1}"
@@ -62,8 +57,11 @@ export WORKER_BACKEND=redis
 export SAAS_RENDERER=mlx-local
 export STORAGE_BACKEND=local
 export STORAGE_LOCAL_ROOT="${SAAS_HOST_STORAGE_ROOT:-$ROOT/workspace/saas-assets}"
+export U2NET_HOME="${U2NET_HOME:-$ROOT/workspace/saas-matting-models}"
+export AVATAR_MATTING_BACKEND="${AVATAR_MATTING_BACKEND:-auto}"
+export AVATAR_MATTING_TORCH_MODEL_DIR="${AVATAR_MATTING_TORCH_MODEL_DIR:-$ROOT/workspace/saas-matting-models/pytorch/BiRefNet-portrait}"
 
-mkdir -p "$STORAGE_LOCAL_ROOT" "$ROOT/workspace" "$ROOT/outputs"
+mkdir -p "$STORAGE_LOCAL_ROOT" "$U2NET_HOME" "$ROOT/workspace" "$ROOT/outputs"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   if [[ "$PYTHON_BIN" == */* ]]; then
@@ -87,17 +85,19 @@ else
 fi
 
 echo "Mac MLX SaaS Worker"
-echo "  Database : $DATABASE_URL"
-echo "  Redis    : $REDIS_URL"
+echo "  Database : configured"
+echo "  Redis    : configured"
 echo "  Storage  : $STORAGE_LOCAL_ROOT"
 echo "  Queue    : ${SAAS_QUEUE_NAME:-avatar:render}:musetalk"
+echo "  Matting  : ${AVATAR_MATTING_MODEL:-birefnet-portrait}"
+echo "  Backend  : $AVATAR_MATTING_BACKEND"
 echo "  Python   : $PYTHON_BIN"
 echo
 
-if ! "$PYTHON_BIN" -c "import psycopg, redis, sqlalchemy" >/dev/null 2>&1; then
-  echo "The selected Python environment is missing SaaS dependencies." >&2
+if ! "$PYTHON_BIN" -c "import psycopg, redis, sqlalchemy, cv2, rembg, torch, torchvision, transformers" >/dev/null 2>&1; then
+  echo "The selected Python environment is missing SaaS or portrait-matting dependencies." >&2
   echo "Install them with:" >&2
-  echo "  uv pip install --python \"$PYTHON_BIN\" -e '.[saas]'" >&2
+  echo "  uv pip install --python \"$PYTHON_BIN\" -e '.[saas,matting]'" >&2
   exit 2
 fi
 
@@ -105,5 +105,5 @@ echo "Running preflight..."
 "$PYTHON_BIN" -m app.saas.mlx_preflight
 
 echo
-echo "Preflight passed. Starting MuseTalk MLX worker..."
+echo "Preflight passed. Starting MuseTalk MLX + transparent-avatar worker..."
 exec "$PYTHON_BIN" -m app.saas.worker_entry

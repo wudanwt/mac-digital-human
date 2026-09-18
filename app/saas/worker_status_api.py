@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from .database import get_db
+from .distributed_render_models import WorkerNode
 from .security import Principal, get_principal
 from .settings import saas_settings
 
@@ -12,7 +17,7 @@ from .settings import saas_settings
 router = APIRouter(prefix="/workers", tags=["workers"])
 
 
-def _status() -> dict:
+def _legacy_status() -> dict:
     result = {
         "mock": {"online": False, "count": 0},
         "musetalk": {"online": False, "count": 0},
@@ -43,9 +48,82 @@ def _status() -> dict:
     return result
 
 
+def _distributed_nodes(db: Session) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    items = db.scalars(select(WorkerNode).order_by(WorkerNode.name.asc(), WorkerNode.created_at.asc())).all()
+    nodes: list[dict] = []
+    for item in items:
+        last_seen = item.last_seen_at
+        if last_seen is not None and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        heartbeat_age = (now - last_seen).total_seconds() if last_seen else None
+        effective_online = bool(
+            last_seen
+            and heartbeat_age is not None
+            and heartbeat_age <= max(30, saas_settings.distributed_lease_seconds)
+            and item.status not in {"revoked", "incompatible"}
+        )
+        nodes.append(
+            {
+                "id": item.id,
+                "name": item.name,
+                "status": item.status if effective_online else (item.status if item.status in {"revoked", "incompatible"} else "offline"),
+                "online": effective_online,
+                "accepting_tasks": item.accepting_tasks,
+                "slots_total": item.slots_total,
+                "slots_busy": item.slots_busy,
+                "current_task_id": item.current_task_id,
+                "machine": item.machine,
+                "code_version": item.code_version,
+                "model_version": item.model_version,
+                "render_contract_version": item.render_contract_version,
+                "disk_free_bytes": item.disk_free_bytes,
+                "memory_available_mb": item.memory_available_mb,
+                "last_error": item.last_error,
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+        )
+    return nodes
+
+
+def merge_engine_status(engines: dict, nodes: list[dict], *, distributed_enabled: bool) -> dict:
+    """Expose distributed Mac workers on the musetalk engine used by the studio."""
+    merged = {key: dict(value) for key, value in engines.items()}
+    if not distributed_enabled:
+        return merged
+    online = sum(1 for node in nodes if node.get("online"))
+    registered = sum(
+        1 for node in nodes if node.get("status") not in {"revoked", "incompatible"}
+    )
+    musetalk = merged.setdefault("musetalk", {"online": False, "count": 0})
+    musetalk["count"] = max(int(musetalk.get("count") or 0), online)
+    musetalk["registered"] = registered
+    musetalk["online"] = bool(online or musetalk.get("online"))
+    return merged
+
+
 @router.get("/status")
 def worker_status(
     principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     del principal
-    return {"backend": saas_settings.worker_backend, "engines": _status()}
+    nodes = _distributed_nodes(db)
+    online_count = sum(1 for node in nodes if node.get("online"))
+    registered_count = sum(1 for node in nodes if node.get("status") not in {"revoked", "incompatible"})
+    return {
+        "backend": saas_settings.worker_backend,
+        "engines": merge_engine_status(
+            _legacy_status(),
+            nodes,
+            distributed_enabled=saas_settings.distributed_render_enabled,
+        ),
+        "distributed": {
+            "enabled": saas_settings.distributed_render_enabled,
+            "render_contract_version": saas_settings.render_contract_version,
+            "online_count": online_count,
+            "registered_count": registered_count,
+            "busy_count": sum(int(node["slots_busy"] or 0) > 0 for node in nodes),
+            "nodes": nodes,
+        },
+    }

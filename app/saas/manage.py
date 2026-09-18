@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import secrets
+from uuid import uuid4
 
 from sqlalchemy import select
 
 from .database import SessionLocal
+from .distributed_render_models import WorkerNode
+from .distributed_scheduler import hash_secret
 from .models import Membership, Tenant, User
 from .security import hash_password
 from .services import active_subscription, unique_slug
@@ -83,6 +87,37 @@ def create_user(email: str, display_name: str, workspace_name: str, free_trial: 
     print(f"User ready: {email} / workspace={tenant.name} / free_trial={free_trial}")
 
 
+def create_worker(name: str, slots: int) -> None:
+    """Provision one revocable API-only compute worker credential.
+
+    The plaintext token is printed once and only its SHA-256 digest is stored.
+    Copy the token to that Mac's .env.remote-worker and do not commit it.
+    """
+
+    clean_name = name.strip()
+    if not clean_name:
+        raise SystemExit("Worker name cannot be empty")
+    slots = max(1, min(4, int(slots)))
+    node_id = uuid4().hex
+    token = f"wrk_{node_id}_{secrets.token_urlsafe(32)}"
+    with SessionLocal() as db:
+        node = WorkerNode(
+            id=node_id,
+            name=clean_name,
+            credential_hash=hash_secret(token),
+            status="offline",
+            accepting_tasks=True,
+            slots_total=slots,
+            slots_busy=0,
+            render_contract_version="",
+        )
+        db.add(node)
+        db.commit()
+    print(f"Worker ready: {clean_name} / id={node_id} / slots={slots}")
+    print("REMOTE_WORKER_TOKEN=" + token)
+    print("Save this token now; the plaintext value is not stored by the center.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="SaaS administration helpers")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -98,11 +133,17 @@ def main() -> None:
     user.add_argument("--workspace", default="我的工作区")
     user.add_argument("--free-trial", action="store_true")
 
+    worker = sub.add_parser("create-worker", help="provision an API-only distributed render worker")
+    worker.add_argument("--name", required=True)
+    worker.add_argument("--slots", type=int, default=1)
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin(args.email, args.name, args.workspace)
     elif args.command == "create-user":
         create_user(args.email, args.name, args.workspace, args.free_trial)
+    elif args.command == "create-worker":
+        create_worker(args.name, args.slots)
 
 
 if __name__ == "__main__":

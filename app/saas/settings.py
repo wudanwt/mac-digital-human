@@ -51,6 +51,22 @@ class SaaSSettings:
     worker_poll_timeout_seconds: int = int(os.getenv("WORKER_POLL_TIMEOUT_SECONDS", "5"))
     allow_local_fallback: bool = _env_bool("SAAS_ALLOW_LOCAL_FALLBACK", True)
 
+    # Page-level distributed rendering remains opt-in until the center executor
+    # and remote-worker rollout have passed the single-machine parity gate.
+    distributed_render_enabled: bool = _env_bool("SAAS_DISTRIBUTED_RENDER_ENABLED", False)
+    distributed_lease_seconds: int = int(os.getenv("SAAS_DISTRIBUTED_LEASE_SECONDS", "120"))
+    distributed_renew_seconds: int = int(os.getenv("SAAS_DISTRIBUTED_RENEW_SECONDS", "10"))
+    distributed_reaper_seconds: int = int(os.getenv("SAAS_DISTRIBUTED_REAPER_SECONDS", "15"))
+    distributed_max_attempts: int = int(os.getenv("SAAS_DISTRIBUTED_MAX_ATTEMPTS", "3"))
+    distributed_stall_seconds: int = int(os.getenv("SAAS_DISTRIBUTED_STALL_SECONDS", "1200"))
+    render_contract_version: str = os.getenv("SAAS_RENDER_CONTRACT_VERSION", "v1")
+    distributed_expected_code_version: str = os.getenv("SAAS_DISTRIBUTED_EXPECTED_CODE_VERSION", "")
+    distributed_expected_model_version: str = os.getenv("SAAS_DISTRIBUTED_EXPECTED_MODEL_VERSION", "")
+    distributed_cache_gb: int = int(os.getenv("SAAS_DISTRIBUTED_CACHE_GB", "20"))
+    distributed_min_disk_free_gb: int = int(os.getenv("SAAS_DISTRIBUTED_MIN_DISK_FREE_GB", "10"))
+    distributed_transfer_slots: int = int(os.getenv("SAAS_DISTRIBUTED_TRANSFER_SLOTS", "2"))
+    distributed_upload_chunk_mb: int = int(os.getenv("SAAS_DISTRIBUTED_UPLOAD_CHUNK_MB", "8"))
+
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
     cors_origins: tuple[str, ...] = _env_list("SAAS_CORS_ORIGINS", "http://localhost:8918,http://127.0.0.1:8918")

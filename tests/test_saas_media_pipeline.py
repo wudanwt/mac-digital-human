@@ -42,7 +42,11 @@ def test_course_tts_professional_matches_local_zero_shot(monkeypatch, tmp_path: 
     runtime = tts_pipeline.build_course_tts(
         voice,
         ref_audio=tmp_path / "ref.wav",
-        course_settings={"speed": 1.1, "emotion": "professional"},
+        course_settings={
+            "speed": 1.1,
+            "emotion": "professional",
+            "tts": {"pronunciation_replacements": {"优优": "悠悠"}},
+        },
         base=tmp_path,
     )
     assert runtime.provider_name == "cosyvoice2"
@@ -51,6 +55,7 @@ def test_course_tts_professional_matches_local_zero_shot(monkeypatch, tmp_path: 
     assert captured["create"]["ref_audio"].endswith("ref.wav")
     assert "instruct" not in captured["create"]
     assert captured["create"]["pause_seconds"] == 0.31
+    assert captured["create"]["pronunciation_replacements"] == {"优优": "悠悠"}
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="ffmpeg required")

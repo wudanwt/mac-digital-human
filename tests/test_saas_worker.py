@@ -93,11 +93,20 @@ def test_mock_worker_creates_downloadable_output_and_reconciles_usage() -> None:
         assert render.status_code == 202, render.text
         job_id = render.json()["id"]
 
-        assert process_one(MockCourseHandler()) is True
+        # The CI suite intentionally shares one Redis service. Earlier tests may
+        # leave other valid mock jobs in the same FIFO, so process until this
+        # acceptance job reaches a terminal state instead of assuming it is the
+        # very next queue item.
+        job = None
+        for _ in range(20):
+            process_one(MockCourseHandler())
+            job_response = client.get(f"/api/saas/jobs/{job_id}", headers=_headers(token))
+            assert job_response.status_code == 200, job_response.text
+            job = job_response.json()
+            if job["status"] in {"succeeded", "failed", "canceled"}:
+                break
 
-        job_response = client.get(f"/api/saas/jobs/{job_id}", headers=_headers(token))
-        assert job_response.status_code == 200, job_response.text
-        job = job_response.json()
+        assert job is not None
         assert job["status"] == "succeeded"
         assert job["output_asset_id"]
         assert job["video_seconds"] and job["video_seconds"] > 0

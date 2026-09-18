@@ -147,6 +147,8 @@ def test_theme_and_course_studio_assets_are_served() -> None:
         assert "运营附加数据" in polish_js.text
         assert studio_js.status_code == 200
         assert "SCRIPT REVIEW" in studio_js.text
+        assert "试听选中内容" in studio_js.text
+        assert "纠正读音" in studio_js.text
         assert "LAYOUT STUDIO" in studio_js.text
         assert studio_upgrade_js.status_code == 200
         assert "上传自定义背景" in studio_upgrade_js.text
@@ -157,3 +159,95 @@ def test_theme_and_course_studio_assets_are_served() -> None:
         assert "/course-studio-upgrade.css" in page.text
         assert "/course-studio.js" in page.text
         assert "/course-studio-upgrade.js" in page.text
+
+
+def test_speech_preview_queue_is_tenant_scoped_cached_and_unbilled() -> None:
+    with TestClient(app) as client:
+        token, _, _ = _register(client, "speech-preview")
+        headers = _headers(token)
+
+        def upload(name: str, kind: str) -> dict:
+            response = client.post(
+                "/api/saas/assets",
+                headers=headers,
+                data={"kind": kind},
+                files={"file": (name, BytesIO(b"test-bytes"), "application/octet-stream")},
+            )
+            assert response.status_code == 201, response.text
+            return response.json()
+
+        ppt = upload("preview.pptx", "ppt")
+        video = upload("preview.mp4", "video")
+        audio = upload("preview.wav", "audio")
+        voice_response = client.post(
+            "/api/saas/voices",
+            headers=headers,
+            json={
+                "name": "Preview voice",
+                "provider": "cosyvoice",
+                "reference_asset_id": audio["id"],
+                "transcript": "这是一段参考声音",
+                "consent_confirmed": True,
+            },
+        )
+        assert voice_response.status_code == 201, voice_response.text
+        voice = voice_response.json()
+        avatar_response = client.post(
+            "/api/saas/avatars",
+            headers=headers,
+            json={
+                "name": "Preview avatar",
+                "master_video_asset_id": video["id"],
+                "voice_profile_id": voice["id"],
+                "consent_confirmed": True,
+            },
+        )
+        assert avatar_response.status_code == 201, avatar_response.text
+        narration = "最后我想问下你们一个问题：今天优优认识了谁？"
+        course_response = client.post(
+            "/api/saas/courses",
+            headers=headers,
+            json={
+                "title": "Speech preview",
+                "ppt_asset_id": ppt["id"],
+                "avatar_id": avatar_response.json()["id"],
+                "voice_profile_id": voice["id"],
+                "script": [{"index": 1, "narration": narration}],
+                "settings": {"tts": {"pronunciation_replacements": {"优优": "悠悠"}}},
+            },
+        )
+        assert course_response.status_code == 201, course_response.text
+        course = course_response.json()
+        remaining_before = client.get("/api/saas/billing/subscription", headers=headers).json()["remaining_seconds"]
+
+        payload = {"slide_index": 1, "scope": "selection", "text": "今天优优认识了谁？"}
+        first = client.post(
+            f"/api/saas/course-tools/courses/{course['id']}/speech-previews",
+            headers=headers,
+            json=payload,
+        )
+        assert first.status_code == 202, first.text
+        assert first.json()["status"] == "queued"
+        repeated = client.post(
+            f"/api/saas/course-tools/courses/{course['id']}/speech-previews",
+            headers=headers,
+            json=payload,
+        )
+        assert repeated.status_code == 202, repeated.text
+        assert repeated.json()["id"] == first.json()["id"]
+        remaining_after = client.get("/api/saas/billing/subscription", headers=headers).json()["remaining_seconds"]
+        assert remaining_after == remaining_before
+
+        other_token, _, _ = _register(client, "speech-preview-other")
+        hidden = client.get(
+            f"/api/saas/course-tools/speech-previews/{first.json()['id']}",
+            headers=_headers(other_token),
+        )
+        assert hidden.status_code == 404
+
+        unsaved_page = client.post(
+            f"/api/saas/course-tools/courses/{course['id']}/speech-previews",
+            headers=headers,
+            json={"slide_index": 1, "scope": "page", "text": narration + "改"},
+        )
+        assert unsaved_page.status_code == 409

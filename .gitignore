@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 .env
 .env.saas
+.env.remote-worker
 /vendor/
 !digital-human-tts/vendor/
 models/

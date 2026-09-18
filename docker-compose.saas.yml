@@ -55,6 +55,31 @@ services:
       - ${SAAS_SHARED_OUTPUTS_DIR:-./outputs}:/app/outputs
     restart: unless-stopped
 
+  distributed-center:
+    image: mac-digital-human-api
+    env_file:
+      - .env.saas
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SAAS_DB_USER:-digital_human}:${SAAS_DB_PASSWORD:-local-dev-only-password}@postgres:5432/${SAAS_DB_NAME:-digital_human}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_ROOT: /app/workspace/saas-assets
+    command: ["python", "-m", "app.saas.distributed_center"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ${SAAS_SHARED_WORKSPACE_DIR:-./workspace}:/app/workspace
+      - ${SAAS_SHARED_OUTPUTS_DIR:-./outputs}:/app/outputs
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
   worker-mock:
     build:
       context: .
