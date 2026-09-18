@@ -277,7 +277,7 @@ def finalize_course(
                 video_path=raw_output,
                 srt_path=srt,
                 output_path=output,
-                font_size=int(settings_payload.get("subtitle_font_size") or 34),
+                font_size=int(settings_payload.get("subtitle_font_size") or 40),
                 margin_bottom=int(settings_payload.get("subtitle_margin_bottom") or 42),
             )
         return output

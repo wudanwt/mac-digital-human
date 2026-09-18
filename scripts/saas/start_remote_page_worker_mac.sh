@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+export PATH="/opt/homebrew/bin:$PATH"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "This launcher requires an Apple Silicon Mac (Darwin arm64)." >&2
@@ -59,7 +60,7 @@ echo "  TTS prefetch: disabled"
 echo
 
 echo "Running Apple-Silicon model preflight..."
-"$PYTHON_BIN" -m app.saas.mlx_preflight
+"$PYTHON_BIN" -m app.saas.mlx_preflight --remote-api "$REMOTE_WORKER_API_BASE"
 
 echo
 echo "Preflight passed. Starting API-only page worker..."

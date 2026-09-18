@@ -25,6 +25,7 @@ from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubt
 from .distributed_scheduler import (
     LeaseConflict,
     SchedulerError,
+    as_utc,
     claim_page_task,
     complete_page_task,
     fail_page_task,
@@ -388,7 +389,11 @@ def _verify_attempt(
     if task.status != "running" or task.active_attempt_id != attempt.id or task.assigned_node_id != node.id:
         raise HTTPException(status_code=409, detail="Task attempt is no longer active")
     now = _now()
-    if task.lease_expires_at is None or task.lease_expires_at <= now or attempt.lease_expires_at <= now:
+    if (
+        task.lease_expires_at is None
+        or as_utc(task.lease_expires_at) <= now
+        or as_utc(attempt.lease_expires_at) <= now
+    ):
         raise HTTPException(status_code=409, detail="Task lease expired")
     return task, attempt
 

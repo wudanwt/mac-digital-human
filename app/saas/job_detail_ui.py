@@ -4,6 +4,7 @@ from fastapi.responses import Response
 
 
 CSS = r'''
+.job-result-preview{margin-bottom:16px}.job-result-preview video{display:block;width:100%;max-height:min(62vh,720px);aspect-ratio:16/9;object-fit:contain;background:#020305;border:1px solid rgba(151,176,214,.12);border-radius:10px}.job-result-preview .toolbar{margin-bottom:10px}.job-preview-loading{display:grid;place-items:center;min-height:240px;color:#718197;background:#05080c;border-radius:10px}
 .job-detail-shell{position:fixed;inset:0;z-index:760;background:#070a0f;color:#edf5ff;display:grid;grid-template-rows:72px minmax(0,1fr);overflow:hidden}.job-detail-top{display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid rgba(151,176,214,.12);background:rgba(8,12,18,.96);backdrop-filter:blur(20px)}.job-detail-title{display:flex;align-items:center;gap:13px}.job-detail-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#8edcff,#4389e9);box-shadow:0 0 28px rgba(82,164,255,.2)}.job-detail-title h2{margin:0;font-size:16px}.job-detail-title small{display:block;color:#67778c;margin-top:2px}.job-detail-body{overflow:auto;padding:26px 30px 50px}.job-detail-pane{max-width:1440px;margin:0 auto}.job-detail-hero{display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(150px,.55fr));gap:12px;margin-bottom:16px}.job-detail-card{background:linear-gradient(180deg,rgba(17,23,32,.94),rgba(10,14,20,.94));border:1px solid rgba(151,176,214,.12);border-radius:17px;padding:18px;box-shadow:0 18px 52px rgba(0,0,0,.18)}.job-detail-card h1{font-size:22px;margin:0 0 6px}.job-detail-card .metric{font-size:25px;font-weight:780;letter-spacing:-.03em}.job-detail-card .label{font-size:10px;color:#6d7c90;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}.job-detail-progress{height:8px;border-radius:999px;background:#172130;overflow:hidden;margin-top:14px}.job-detail-progress i{display:block;height:100%;background:linear-gradient(90deg,#357fcb,#70ddff);box-shadow:0 0 18px rgba(91,190,255,.28)}.job-phase-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px}.job-phase{position:relative;padding:12px 13px;border:1px solid rgba(151,176,214,.1);border-radius:13px;background:#0c1118;color:#617086}.job-phase b{display:block;font-size:11px;color:#8697aa}.job-phase span{font-size:10px}.job-phase.done{border-color:rgba(80,197,157,.18);background:#0c1817}.job-phase.done b{color:#6fd7b2}.job-phase.active{border-color:rgba(99,181,245,.42);background:#0f1d2c;box-shadow:0 0 0 2px rgba(99,181,245,.055)}.job-phase.active b{color:#85cfff}.job-detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px}.slide-progress-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px}.slide-progress-card{background:#0b1017;border:1px solid rgba(151,176,214,.10);border-radius:14px;padding:14px}.slide-progress-card.current,.slide-progress-card.running{border-color:rgba(105,191,255,.42);box-shadow:0 0 0 2px rgba(105,191,255,.05)}.slide-progress-card.failed{border-color:rgba(255,111,133,.28)}.slide-progress-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}.slide-progress-head b{font-size:12px}.slide-progress-head small{display:block;color:#637389;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}.slide-pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.slide-stage{padding:7px 6px;border-radius:8px;background:#121923;text-align:center;font-size:9px;color:#65758a;border:1px solid transparent}.slide-stage.running{color:#86cbff;border-color:rgba(94,177,239,.26);background:#102033;animation:jobPulse 1.4s infinite}.slide-stage.done{color:#75d9b5;background:#0d211d}.slide-stage.skipped{color:#8895a5;background:#15191f}.slide-stage.failed{color:#ff97a7;background:#2a151b}.slide-progress-bar{height:4px;border-radius:99px;background:#172130;overflow:hidden;margin-top:8px}.slide-progress-bar i{display:block;height:100%;background:linear-gradient(90deg,#357fcb,#70ddff)}.slide-meta-row{display:flex;justify-content:space-between;gap:10px;margin-top:9px;color:#607086;font-size:9px}.job-runtime-side{display:flex;flex-direction:column;gap:10px}.job-runtime-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid rgba(151,176,214,.08);font-size:11px}.job-runtime-line span:first-child{color:#69798e}.job-runtime-detail{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.7;color:#8ca9c4;word-break:break-word;white-space:pre-wrap}.job-error{margin-top:12px;padding:12px;border-radius:10px;background:#29151b;border:1px solid rgba(255,111,133,.2);color:#ff9cad;white-space:pre-wrap}.job-detail-empty{padding:44px;text-align:center;color:#64748b}.job-detail-btn{margin-left:6px;white-space:nowrap}.job-detail-btn.primary-entry{border-color:rgba(90,177,245,.45);background:#10283e;color:#aaddff}@keyframes jobPulse{0%,100%{opacity:1}50%{opacity:.62}}@media(max-width:980px){.job-detail-hero{grid-template-columns:1fr 1fr}.job-detail-layout{grid-template-columns:1fr}.job-phase-row{grid-template-columns:1fr 1fr}.job-detail-body{padding:18px 14px 40px}}@media(max-width:600px){.job-detail-hero{grid-template-columns:1fr}.job-phase-row{grid-template-columns:1fr}.slide-progress-grid{grid-template-columns:1fr}}
 '''
 
@@ -11,6 +12,7 @@ CSS = r'''
 JS = r'''
 (() => {
   let detailTimer=null;
+  let resultVideoUrl=null;
   let jobsCache={at:0,items:[]};
   const safe=s=>typeof esc==='function'?esc(s):String(s??'');
   const fmtSec=v=>v==null||v===''||Number.isNaN(Number(v))?'—':`${Number(v).toFixed(Number(v)>=10?0:1)}s`;
@@ -62,7 +64,27 @@ JS = r'''
     });
   }
 
-  function closeDetail(){if(detailTimer){clearTimeout(detailTimer);detailTimer=null}document.getElementById('jobDetailShell')?.remove()}
+  function releaseResultVideo(){if(resultVideoUrl){URL.revokeObjectURL(resultVideoUrl);resultVideoUrl=null}}
+  function closeDetail(){if(detailTimer){clearTimeout(detailTimer);detailTimer=null}releaseResultVideo();document.getElementById('jobDetailShell')?.remove()}
+
+  async function hydrateResultVideo(assetId){
+    const host=document.querySelector('[data-job-video-preview]');if(!host||!assetId)return;
+    try{
+      const r=await fetch(API+'/assets/'+assetId+'/download',{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok)throw Error('成片预览加载失败');
+      releaseResultVideo();resultVideoUrl=URL.createObjectURL(await r.blob());
+      if(!document.body.contains(host)){releaseResultVideo();return}
+      host.innerHTML=`<video controls playsinline preload="metadata" src="${resultVideoUrl}"></video>`;
+    }catch(e){host.innerHTML=`<div class="job-preview-loading">${safe(e.message)}</div>`}
+  }
+
+  function mountResultPreview(shell,assetId){
+    if(!shell||!assetId)return;
+    const section=document.createElement('section');section.className='job-detail-card job-result-preview';
+    section.innerHTML=`<div class="toolbar"><div><div class="label">RESULT PREVIEW</div><h2 style="margin:0">成片预览</h2></div><button class="secondary" data-job-download="${safe(assetId)}">下载成片</button></div><div data-job-video-preview><div class="job-preview-loading">正在加载成片…</div></div>`;
+    shell.querySelector('.job-detail-layout')?.before(section);
+    const headerDownload=shell.querySelector('.job-detail-top [data-job-download]');if(headerDownload)headerDownload.textContent='下载成片';
+  }
 
   function stageClass(stage,n,status,actives){
     if(status==='succeeded')return'done';
@@ -240,6 +262,7 @@ JS = r'''
       const scroll=old?.querySelector('.job-detail-body')?.scrollTop||0;
       const holder=document.createElement('div');holder.innerHTML=renderShell(d);const fresh=holder.firstElementChild;
       if(old)old.replaceWith(fresh);else document.body.appendChild(fresh);
+      if(d.output_asset_id){mountResultPreview(fresh,d.output_asset_id);hydrateResultVideo(d.output_asset_id)}
       const body=fresh.querySelector('.job-detail-body');if(body)body.scrollTop=scroll;
       if(['queued','running'].includes(d.status))detailTimer=setTimeout(()=>refreshDetail(id),1500);
     }catch(e){if(typeof toast==='function')toast(e.message)}

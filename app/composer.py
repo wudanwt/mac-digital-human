@@ -50,14 +50,16 @@ def media_duration(path: Path) -> float:
 # Burn-in runs on both Mac workers and the Linux distributed center.
 # ImageFont.load_default() cannot render CJK, so missing fonts become tofu.
 _SUBTITLE_FONT_CANDIDATES = (
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/STHeiti Medium.ttc",
-    "/System/Library/Fonts/Supplemental/Songti.ttc",
-    "/Library/Fonts/Arial Unicode.ttf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    ("/System/Library/Fonts/PingFang.ttc", 1),
+    ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+    ("/System/Library/Fonts/Supplemental/Songti.ttc", 0),
+    ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 2),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 2),
+    ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 2),
 )
 
 
@@ -66,18 +68,18 @@ class CourseComposer:
         self.config = config or ComposeConfig()
 
     @staticmethod
-    def subtitle_font_candidates() -> tuple[str, ...]:
+    def subtitle_font_candidates() -> tuple[tuple[str, int], ...]:
         return _SUBTITLE_FONT_CANDIDATES
 
     @classmethod
     def load_subtitle_font(cls, font_size: int = 34):
         from PIL import ImageFont
 
-        for path in cls.subtitle_font_candidates():
+        for path, face_index in cls.subtitle_font_candidates():
             if not Path(path).exists():
                 continue
             try:
-                font = ImageFont.truetype(path, font_size)
+                font = ImageFont.truetype(path, font_size, index=face_index)
             except OSError:
                 continue
             probe = font.getbbox("字幕")

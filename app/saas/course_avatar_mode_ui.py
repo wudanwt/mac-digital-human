@@ -27,7 +27,15 @@ JS = r'''
     const text=document.querySelector('#courseStudioPane .course-pane-head>.muted')?.textContent||'';const m=text.match(/\/\s*(\d+)/);return Number(m?.[1]||1);
   }
   function currentMode(){return modeMap().get(slideIndex())||'original'}
-  function setMode(index,mode){if(validModes.has(mode))modeMap().set(Number(index),mode)}
+  function setMode(index,mode){
+    if(!validModes.has(mode))return;
+    modeMap().set(Number(index),mode);
+    const slides=window.__courseStudioSlides;
+    if(Array.isArray(slides)){
+      const slide=slides.find((item,i)=>Number(item?.index||i+1)===Number(index));
+      if(slide)slide.avatar_mode=mode;
+    }
+  }
   function dirty(){const e=document.getElementById('studioSaveState');if(e)e.textContent='有未保存更改'}
 
   function seedCourse(course){

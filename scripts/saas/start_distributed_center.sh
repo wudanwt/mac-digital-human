@@ -4,14 +4,56 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
+load_dotenv() {
+  local file="$1" line key value first last
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    line="${line#export }"
+    [[ "$line" == *"="* ]] || continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+    if [[ ${#value} -ge 2 ]]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if [[ ( "$first" == '"' && "$last" == '"' ) || ( "$first" == "'" && "$last" == "'" ) ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$file"
+}
+
 if [[ -f .env.saas ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env.saas
-  set +a
+  load_dotenv .env.saas
 fi
 
-export SAAS_DISTRIBUTED_RENDER_ENABLED="${SAAS_DISTRIBUTED_RENDER_ENABLED:-true}"
+if [[ "${SAAS_DISTRIBUTED_RENDER_ENABLED:-false}" != "true" ]]; then
+  echo "Set SAAS_DISTRIBUTED_RENDER_ENABLED=true for both the SaaS API and center before starting distributed rendering." >&2
+  exit 2
+fi
+
+DB_NAME="${SAAS_DB_NAME:-digital_human}"
+DB_USER="${SAAS_DB_USER:-digital_human}"
+DB_PASSWORD="${SAAS_DB_PASSWORD:-local-dev-only-password}"
+DB_PORT="${SAAS_POSTGRES_HOST_PORT:-5432}"
+REDIS_PORT="${SAAS_REDIS_HOST_PORT:-6379}"
+export DATABASE_URL="${SAAS_HOST_DATABASE_URL:-postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/${DB_NAME}}"
+export REDIS_URL="${SAAS_HOST_REDIS_URL:-redis://127.0.0.1:${REDIS_PORT}/0}"
+export WORKER_BACKEND=redis
+export STORAGE_BACKEND=local
+export STORAGE_LOCAL_ROOT="${SAAS_HOST_STORAGE_ROOT:-$ROOT/workspace/saas-assets}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   :

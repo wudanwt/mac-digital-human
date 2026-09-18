@@ -48,6 +48,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime) -> datetime:
+    # SQLite drops timezone information even for DateTime(timezone=True).
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def canonical_hash(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -404,7 +409,11 @@ def _active_attempt(
         raise LeaseConflict("attempt ownership mismatch")
     if not hmac.compare_digest(attempt.lease_token_hash, hash_secret(lease_token)):
         raise LeaseConflict("invalid lease token")
-    if not allow_expired and (task.lease_expires_at is None or task.lease_expires_at <= now or attempt.lease_expires_at <= now):
+    if not allow_expired and (
+        task.lease_expires_at is None
+        or as_utc(task.lease_expires_at) <= now
+        or as_utc(attempt.lease_expires_at) <= now
+    ):
         raise LeaseConflict("lease has expired")
     return task, attempt, node
 
@@ -634,11 +643,11 @@ def _attempt_progress_at(attempt: RenderAttempt) -> datetime:
     if raw:
         try:
             value = datetime.fromisoformat(str(raw))
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return as_utc(value)
         except (TypeError, ValueError):
             pass
     claimed = attempt.claimed_at
-    return claimed if claimed.tzinfo else claimed.replace(tzinfo=timezone.utc)
+    return as_utc(claimed)
 
 
 def reap_stalled_page_attempts(db: Session) -> int:

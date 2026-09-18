@@ -49,7 +49,8 @@ JS = r'''
 
   function emptySlide(source){return {
     index:Number(source.index),title:source.title||`第 ${source.index} 页`,narration:source.narration||'',layout:source.layout||'pip',
-    ppt_box:deep(source.ppt_box||defaultPpt),pip_box:deep(source.pip_box||defaultAvatar),bg_blur:Boolean(source.bg_blur),thumbnail_url:source.thumbnail_url||null
+    ppt_box:deep(source.ppt_box||defaultPpt),pip_box:deep(source.pip_box||defaultAvatar),bg_blur:Boolean(source.bg_blur),
+    avatar_mode:['transparent','white','original'].includes(source.avatar_mode)?source.avatar_mode:'original',thumbnail_url:source.thumbnail_url||null
   }}
   function mergeSlides(outline,existing=[]){
     const map=Object.fromEntries((existing||[]).filter(x=>x&&typeof x==='object').map((x,i)=>[Number(x.index||i+1),x]));
@@ -60,7 +61,7 @@ JS = r'''
   function settingsPayload(step=studio.step){return {...(studio.baseSettings||{}),wizard_step:step,bg_blur:studio.globalBlur,embed_subtitles:studio.embedSubtitles,studio_version:1}}
   function pronunciationRules(){const rules=studio?.baseSettings?.tts?.pronunciation_replacements;return rules&&typeof rules==='object'&&!Array.isArray(rules)?{...rules}:{}}
   function setPronunciationRules(rules){const base=studio.baseSettings||{},tts={...(base.tts||{})};if(Object.keys(rules).length)tts.pronunciation_replacements=rules;else delete tts.pronunciation_replacements;studio.baseSettings={...base,tts};invalidateSpeechPreviews()}
-  function scriptPayload(){return studio.slides.map(s=>({index:s.index,title:s.title,narration:s.narration,layout:s.layout,ppt_box:s.ppt_box,pip_box:s.pip_box,bg_blur:s.bg_blur}))}
+  function scriptPayload(){return studio.slides.map(s=>({index:s.index,title:s.title,narration:s.narration,layout:s.layout,ppt_box:s.ppt_box,pip_box:s.pip_box,bg_blur:s.bg_blur,avatar_mode:s.avatar_mode||'original'}))}
 
   async function uploadPptIfNeeded(){
     const input=document.getElementById('studioPptFile');const file=input?.files?.[0];
@@ -186,7 +187,7 @@ JS = r'''
     pane.innerHTML=`<div class="course-pane-head"><div><div class="eyebrow">STEP 04 · PACKAGE & RENDER</div><h2>包装与生成确认</h2><p>确认课程、数字人、字幕和生成引擎，然后提交异步任务。</p></div></div><div class="package-grid"><section class="studio-panel"><h2>${ehtml(studio.title)}</h2><div class="package-summary"><div class="package-metric"><span class="muted">课件页数</span><b>${studio.slides.length}</b></div><div class="package-metric"><span class="muted">讲稿字数</span><b>${chars}</b></div><div class="package-metric"><span class="muted">预计时长</span><b>${mins} min</b></div></div><div class="field"><label>主讲数字人</label><div>${ehtml(avatar?.name||'未选择')}</div></div><label class="check"><input id="studioSubtitle" type="checkbox" ${studio.embedSubtitles?'checked':''}><span>生成并烧录字幕</span></label><div class="readiness-list">${readiness?.ready?'<div class="readiness-row ok">✓ 课程素材、数字人、声音、授权和讲稿均已就绪</div>':(readiness?.issues||['保存课程后进行完整性检查']).map(x=>`<div class="readiness-row bad">! ${ehtml(x)}</div>`).join('')}</div></section><aside class="studio-panel"><h2>生成引擎</h2><div class="engine-choice"><label class="engine-option active"><input type="radio" name="studioEngine" value="mock" checked> <b>Mock 验收</b><small>不需要 GPU，用于验证 SaaS 全流程、成片交付和额度结算。</small></label><label class="engine-option"><input type="radio" name="studioEngine" value="musetalk"> <b>Mac MLX · MuseTalk</b><small>使用 Apple Silicon 本地 Worker 生成真实数字人课程。</small></label></div><div class="studio-panel" style="margin-top:14px;padding:14px"><div class="eyebrow">COMPLIANCE</div><b>AI 生成标识自动开启</b><div class="muted">成片会执行平台统一的 AI 内容标识策略。</div></div><button class="primary wide" id="studioProduce" style="margin-top:16px;padding:13px">开始生成数字人课程</button></aside></div>${footer(3,null)}`;
     document.getElementById('studioSubtitle').onchange=e=>{studio.embedSubtitles=e.target.checked;markDirty()};document.querySelectorAll('.engine-option input').forEach(r=>r.onchange=()=>document.querySelectorAll('.engine-option').forEach(x=>x.classList.toggle('active',x.querySelector('input').checked)));document.getElementById('studioProduce').onclick=submitRender;wireFooter(3,null)
   }
-  function renderStudio(){cleanupBlobUrls();shell();if(studio.step===1)renderStep1();else if(studio.step===2)renderStep2();else if(studio.step===3)renderStep3();else renderStep4()}
+  function renderStudio(){window.__courseStudioSlides=studio.slides;cleanupBlobUrls();shell();if(studio.step===1)renderStep1();else if(studio.step===2)renderStep2();else if(studio.step===3)renderStep3();else renderStep4()}
 
   async function openStudio(course=null,forcedStep=null){
     cleanupBlobUrls();

@@ -177,6 +177,7 @@ class RemoteApi:
             base_url=self.origin,
             headers={"Authorization": f"Bearer {config.token}"},
             timeout=httpx.Timeout(config.request_timeout_seconds, connect=15.0),
+            trust_env=False,
         )
 
     def close(self) -> None:

@@ -40,6 +40,9 @@ def test_job_detail_javascript_consumes_distributed_tasks() -> None:
     assert "未分配节点" in JS
     assert "elapsedSeconds(d)" in JS
     assert "etaSeconds(d,elapsed)" in JS
+    assert "data-job-video-preview" in JS
+    assert "hydrateResultVideo" in JS
+    assert "Authorization:'Bearer '+token" in JS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required to execute job-detail helpers")
