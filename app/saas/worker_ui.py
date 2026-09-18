@@ -8,6 +8,29 @@ JS = r'''
   let checking=false;
   let mountedRadio=null;
 
+  function engineInfo(status,radioValue){
+    const dist=status.distributed||{};
+    if(radioValue==='musetalk'&&dist.enabled){
+      const online=Number(dist.online_count||0);
+      const registered=Number(dist.registered_count||(Array.isArray(dist.nodes)?dist.nodes.length:0)||0);
+      if(registered>0||online>0){
+        return {online:online>0,count:online,registered};
+      }
+    }
+    const engine=radioValue==='musetalk'?'musetalk':'mock';
+    const info=status.engines?.[engine]||{online:false,count:0};
+    return {online:Boolean(info.online),count:Number(info.count||0),registered:Number(info.registered||info.count||0)};
+  }
+
+  function workerBadgeText(radioValue,info){
+    if(radioValue==='musetalk'&&Number(info.registered||0)>0){
+      return info.online
+        ?`● Worker 在线 · ${info.count}/${info.registered} 台`
+        :`○ Worker 未启动 · 已登记 ${info.registered} 台`;
+    }
+    return info.online?`● Worker 在线 · ${info.count}`:'○ Worker 未启动';
+  }
+
   async function patchWorkerOptions(){
     if(checking||!token)return;
     const radios=[...document.querySelectorAll('input[name="studioEngine"]')];
@@ -16,8 +39,7 @@ JS = r'''
     try{
       const status=await api('/workers/status');
       for(const radio of radios){
-        const engine=radio.value==='musetalk'?'musetalk':'mock';
-        const info=status.engines?.[engine]||{online:false,count:0};
+        const info=engineInfo(status,radio.value);
         const option=radio.closest('.engine-option');
         if(!option)continue;
         let badge=option.querySelector('.worker-live-badge');
@@ -26,7 +48,7 @@ JS = r'''
           badge.className='worker-live-badge';
           option.appendChild(badge);
         }
-        const badgeText=info.online?`● Worker 在线 · ${info.count}`:'○ Worker 未启动';
+        const badgeText=workerBadgeText(radio.value,info);
         const badgeStyle=`margin-top:7px;font-size:10px;color:${info.online?'#69ddb4':'#ff9d9d'}`;
         if(badge.textContent!==badgeText)badge.textContent=badgeText;
         if(badge.style.cssText!==badgeStyle)badge.style.cssText=badgeStyle;

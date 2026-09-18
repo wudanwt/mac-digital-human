@@ -86,6 +86,22 @@ def _distributed_nodes(db: Session) -> list[dict]:
     return nodes
 
 
+def merge_engine_status(engines: dict, nodes: list[dict], *, distributed_enabled: bool) -> dict:
+    """Expose distributed Mac workers on the musetalk engine used by the studio."""
+    merged = {key: dict(value) for key, value in engines.items()}
+    if not distributed_enabled:
+        return merged
+    online = sum(1 for node in nodes if node.get("online"))
+    registered = sum(
+        1 for node in nodes if node.get("status") not in {"revoked", "incompatible"}
+    )
+    musetalk = merged.setdefault("musetalk", {"online": False, "count": 0})
+    musetalk["count"] = max(int(musetalk.get("count") or 0), online)
+    musetalk["registered"] = registered
+    musetalk["online"] = bool(online or musetalk.get("online"))
+    return merged
+
+
 @router.get("/status")
 def worker_status(
     principal: Annotated[Principal, Depends(get_principal)],
@@ -93,13 +109,20 @@ def worker_status(
 ) -> dict:
     del principal
     nodes = _distributed_nodes(db)
+    online_count = sum(1 for node in nodes if node.get("online"))
+    registered_count = sum(1 for node in nodes if node.get("status") not in {"revoked", "incompatible"})
     return {
         "backend": saas_settings.worker_backend,
-        "engines": _legacy_status(),
+        "engines": merge_engine_status(
+            _legacy_status(),
+            nodes,
+            distributed_enabled=saas_settings.distributed_render_enabled,
+        ),
         "distributed": {
             "enabled": saas_settings.distributed_render_enabled,
             "render_contract_version": saas_settings.render_contract_version,
-            "online_count": sum(bool(node["online"]) for node in nodes),
+            "online_count": online_count,
+            "registered_count": registered_count,
             "busy_count": sum(int(node["slots_busy"] or 0) > 0 for node in nodes),
             "nodes": nodes,
         },

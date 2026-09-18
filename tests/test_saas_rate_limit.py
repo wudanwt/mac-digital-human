@@ -36,3 +36,4 @@ def test_worker_ui_does_not_repoll_for_its_own_dom_updates() -> None:
     assert "if(radio===mountedRadio)return" in WORKER_UI_JS
     assert "},15000);" in WORKER_UI_JS
     assert "!document.hidden" in WORKER_UI_JS
+    assert "if(badge.textContent!==badgeText)badge.textContent=badgeText" in WORKER_UI_JS
