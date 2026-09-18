@@ -47,9 +47,47 @@ def media_duration(path: Path) -> float:
         raise ComposeError(f"unable to read duration: {path}") from exc
 
 
+# Burn-in runs on both Mac workers and the Linux distributed center.
+# ImageFont.load_default() cannot render CJK, so missing fonts become tofu.
+_SUBTITLE_FONT_CANDIDATES = (
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+)
+
+
 class CourseComposer:
     def __init__(self, config: ComposeConfig | None = None) -> None:
         self.config = config or ComposeConfig()
+
+    @staticmethod
+    def subtitle_font_candidates() -> tuple[str, ...]:
+        return _SUBTITLE_FONT_CANDIDATES
+
+    @classmethod
+    def load_subtitle_font(cls, font_size: int = 34):
+        from PIL import ImageFont
+
+        for path in cls.subtitle_font_candidates():
+            if not Path(path).exists():
+                continue
+            try:
+                font = ImageFont.truetype(path, font_size)
+            except OSError:
+                continue
+            probe = font.getbbox("字幕")
+            if probe is None:
+                continue
+            if probe[2] - probe[0] >= font_size:
+                return font
+        raise ComposeError(
+            "no CJK-capable subtitle font found; install fonts-noto-cjk or a PingFang/Heiti face"
+        )
 
     @staticmethod
     def _run(cmd: list[str]) -> None:
@@ -457,7 +495,7 @@ class CourseComposer:
 
         import re
         import shutil
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
 
         content = srt_path.read_text(encoding="utf-8").strip()
         if not content:
@@ -482,19 +520,8 @@ class CourseComposer:
         if not entries:
             return video_path
 
-        font_candidates = [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/STHeiti Medium.ttc",
-            "/System/Library/Fonts/Supplemental/Songti.ttc",
-            "/Library/Fonts/Arial Unicode.ttf",
-        ]
-        font_file = None
-        for fc in font_candidates:
-            if Path(fc).exists():
-                font_file = fc
-                break
-
         cfg = self.config
+        fnt = self.load_subtitle_font(font_size)
         temp_dir = output_path.parent / f"sub_cards_{output_path.stem}_{int(time.time())}"
         temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -507,7 +534,6 @@ class CourseComposer:
                 card_path = temp_dir / f"card_{idx:04d}.png"
                 img = Image.new("RGBA", (cfg.width, cfg.height), (0, 0, 0, 0))
                 draw = ImageDraw.Draw(img)
-                fnt = ImageFont.truetype(font_file, font_size) if font_file else ImageFont.load_default()
 
                 bbox = draw.textbbox((0, 0), txt, font=fnt)
                 tw = bbox[2] - bbox[0]
