@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 from uuid import uuid4
 
 import pytest
@@ -8,13 +9,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.saas.database import SessionLocal
-from app.saas.distributed_render_models import RenderSubtask, WorkerNode
+from app.saas.distributed_render_models import RenderAttempt, RenderSubtask, WorkerNode
 from app.saas.distributed_scheduler import (
     LeaseConflict,
     claim_page_task,
     complete_page_task,
     initialize_parent_graph,
     publish_prepared_pages,
+    reap_stalled_page_attempts,
     renew_lease,
     report_progress,
 )
@@ -219,3 +221,62 @@ def test_page_leases_are_exclusive_and_release_finalize_after_last_page() -> Non
             assert finalize is not None
             assert finalize.status == "queued"
             assert finalize.stage == "queued"
+
+
+def test_stalled_page_attempt_is_requeued_even_with_live_lease() -> None:
+    with TestClient(app) as client:
+        token = _register(client)
+        parent_job_id = _queued_parent(client, token)
+
+        with SessionLocal() as db:
+            initialize_parent_graph(db, parent_job_id)
+            publish_prepared_pages(
+                db,
+                parent_job_id=parent_job_id,
+                pages=[{"index": 1, "narration": "stalled page", "estimated_seconds": 5}],
+            )
+            node = WorkerNode(
+                name="stalled-mini",
+                credential_hash=f"test-{uuid4().hex}",
+                status="online",
+                accepting_tasks=True,
+                slots_total=1,
+                slots_busy=0,
+                render_contract_version=saas_settings.render_contract_version,
+            )
+            db.add(node)
+            db.commit()
+            node_id = node.id
+
+        with SessionLocal() as db:
+            lease = claim_page_task(db, node_id=node_id)
+            assert lease is not None
+            db.commit()
+            attempt_id = lease.attempt_id
+            task_id = lease.task_id
+
+        with SessionLocal() as db:
+            attempt = db.get(RenderAttempt, attempt_id)
+            task = db.get(RenderSubtask, task_id)
+            node = db.get(WorkerNode, node_id)
+            assert attempt is not None and task is not None and node is not None
+            # Lease stays live, but stage progress is deliberately ancient.
+            attempt.metrics_json = json.dumps({"_progress_at": "2000-01-01T00:00:00+00:00"})
+            assert task.lease_expires_at is not None
+            assert node.slots_busy == 1
+            db.commit()
+
+        with SessionLocal() as db:
+            recovered = reap_stalled_page_attempts(db)
+            assert recovered == 1
+            db.commit()
+
+        with SessionLocal() as db:
+            attempt = db.get(RenderAttempt, attempt_id)
+            task = db.get(RenderSubtask, task_id)
+            node = db.get(WorkerNode, node_id)
+            assert attempt is not None and attempt.status == "failed"
+            assert task is not None and task.status == "retry_wait"
+            assert task.active_attempt_id is None
+            assert task.assigned_node_id is None
+            assert node is not None and node.slots_busy == 0
