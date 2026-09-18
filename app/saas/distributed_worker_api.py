@@ -51,6 +51,14 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _json(value: str | None, fallback: Any) -> Any:
     try:
         parsed = json.loads(value or "")
@@ -262,6 +270,7 @@ def register_worker_runtime(
     node: Annotated[WorkerNode, Depends(get_worker_node)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
+    was_incompatible = node.status == "incompatible"
     error = _compatibility_error(body)
     node.name = body.name.strip()
     node.host = body.host.strip()
@@ -279,7 +288,12 @@ def register_worker_runtime(
         node.accepting_tasks = False
         node.status = "incompatible"
     else:
-        node.status = "busy" if node.slots_busy else "online"
+        # An incompatibility automatically drains the node. If the same worker
+        # later registers with a compatible runtime, restore automatic
+        # acceptance unless an operator changed its state after that failure.
+        if was_incompatible and not node.accepting_tasks:
+            node.accepting_tasks = True
+        node.status = "busy" if node.slots_busy else ("online" if node.accepting_tasks else "draining")
     db.commit()
     if error:
         raise HTTPException(status_code=409, detail=error)
@@ -720,7 +734,7 @@ async def upload_artifact_chunk(
         raise HTTPException(status_code=422, detail="Uploaded artifact exceeds declared size")
     if not x_content_sha256 or len(x_content_sha256.strip()) != 64:
         raise HTTPException(status_code=422, detail="X-Content-SHA256 is required on the final chunk")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = _sha256_path(path)
     if not hmac.compare_digest(digest, x_content_sha256.strip().lower()):
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="Artifact SHA-256 mismatch")
