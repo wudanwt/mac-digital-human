@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.saas import mlx_preflight
-from app.saas.remote_page_worker import RemoteApi, RemoteWorkerConfig, worker_instance_lock
+from app.saas.remote_page_worker import RemoteApi, RemoteWorkerConfig, worker_instance_lock, worker_lock_path
 
 
 def _config(tmp_path: Path) -> RemoteWorkerConfig:
@@ -38,13 +38,18 @@ def test_remote_api_resolves_task_scoped_relative_urls(tmp_path: Path) -> None:
 
 
 def test_remote_worker_rejects_duplicate_process_for_same_cache(tmp_path: Path) -> None:
+    lock_path = worker_lock_path(tmp_path)
+    assert lock_path.parent == tmp_path.resolve().parent / ".remote-worker-locks"
+    assert tmp_path.resolve() not in lock_path.parents
+
     with worker_instance_lock(tmp_path):
+        assert lock_path.read_text().strip()
         with pytest.raises(RuntimeError, match="already running"):
             with worker_instance_lock(tmp_path):
                 pass
 
     with worker_instance_lock(tmp_path):
-        assert (tmp_path / ".remote-page-worker.lock").read_text().strip()
+        assert lock_path.read_text().strip()
 
 
 def test_remote_preflight_uses_center_api_without_local_services(monkeypatch) -> None:
