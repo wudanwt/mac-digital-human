@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from io import BytesIO
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.saas.database import SessionLocal
 from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
+from app.saas.distributed_worker_api import _sha256_path
 from app.saas.models import User
 from app.saas.security import decode_access_token
 from app.saas.settings import saas_settings
@@ -263,3 +265,62 @@ def test_worker_api_auth_range_resume_and_idempotent_complete() -> None:
             assert repeated.json()["idempotent"] is True
     finally:
         object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+
+
+def test_worker_artifact_hash_streams_file(monkeypatch, tmp_path: Path) -> None:
+    payload = b"x" * (3 * 1024 * 1024 + 17)
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: (_ for _ in ()).throw(AssertionError("read_bytes must not be used for artifact hashing")),
+    )
+    assert _sha256_path(path) == hashlib.sha256(payload).hexdigest()
+
+
+def test_incompatible_worker_recovers_after_compatible_registration() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+        provision = client.post(
+            "/api/saas/distributed/workers",
+            headers=_headers(token),
+            json={"name": "recovering-mini", "slots_total": 1},
+        )
+        assert provision.status_code == 201, provision.text
+        worker_token = provision.json()["token"]
+        worker_headers = {"Authorization": f"Bearer {worker_token}"}
+        base_payload = {
+            "name": "recovering-mini",
+            "host": "recovering-mini.local",
+            "platform": "macOS",
+            "machine": "arm64",
+            "slots_total": 1,
+            "capabilities": ["musetalk"],
+            "versions": {"test": "1"},
+            "code_version": "0.5.0",
+            "model_version": "musetalk-mlx",
+        }
+
+        rejected = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={**base_payload, "render_contract_version": "outdated-contract"},
+        )
+        assert rejected.status_code == 409, rejected.text
+
+        workers = client.get("/api/saas/distributed/workers", headers=_headers(token))
+        assert workers.status_code == 200, workers.text
+        rejected_node = next(item for item in workers.json() if item["name"] == "recovering-mini")
+        assert rejected_node["status"] == "incompatible"
+        assert rejected_node["accepting_tasks"] is False
+
+        recovered = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={**base_payload, "render_contract_version": saas_settings.render_contract_version},
+        )
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["worker"]["accepting_tasks"] is True
+        assert recovered.json()["worker"]["status"] == "online"
