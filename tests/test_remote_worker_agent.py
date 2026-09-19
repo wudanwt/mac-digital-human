@@ -144,3 +144,22 @@ def test_install_launch_agent_uses_current_python(monkeypatch) -> None:
     assert args[0] == remote_worker_agent.sys.executable
     assert args[-1] == "remote"
     assert check is True
+
+
+def test_remote_worker_config_keeps_legacy_env_credentials(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(
+        "REMOTE_WORKER_API_BASE",
+        "https://legacy-worker-api.example.com/api/saas/internal/render",
+    )
+    monkeypatch.setenv("REMOTE_WORKER_TOKEN", "wrk_legacy_secret")
+    monkeypatch.setenv("REMOTE_WORKER_NAME", "legacy-mini")
+    monkeypatch.setenv("REMOTE_WORKER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        remote_worker_agent,
+        "load_agent_runtime",
+        lambda: (_ for _ in ()).throw(AssertionError("Keychain should not be read")),
+    )
+    config = RemoteWorkerConfig.from_env()
+    assert config.api_base == "https://legacy-worker-api.example.com/api/saas/internal/render"
+    assert config.token == "wrk_legacy_secret"
+    assert config.name == "legacy-mini"
