@@ -700,11 +700,16 @@ def test_worker_enrollment_is_single_use_and_issues_real_credential() -> None:
         assert replay.status_code == 401
 
         worker_headers = {"Authorization": f"Bearer {worker_token}"}
-        pre_register_claim = client.post(
-            "/api/saas/internal/render/tasks/claim",
-            headers=worker_headers,
-        )
-        assert pre_register_claim.status_code == 409
+        original_enabled = saas_settings.distributed_render_enabled
+        object.__setattr__(saas_settings, "distributed_render_enabled", True)
+        try:
+            pre_register_claim = client.post(
+                "/api/saas/internal/render/tasks/claim",
+                headers=worker_headers,
+            )
+            assert pre_register_claim.status_code == 409
+        finally:
+            object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
 
         register = client.post(
             "/api/saas/internal/render/register",
