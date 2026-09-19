@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0009_operations_management"
-down_revision = "0008_distributed_render_control_plane"
+down_revision = "0008_distributed_render"
 branch_labels = None
 depends_on = None
 
