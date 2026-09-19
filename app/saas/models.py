@@ -95,6 +95,30 @@ class Asset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class SystemAssetTemplate(Base):
+    __tablename__ = "system_asset_templates"
+    __table_args__ = (UniqueConstraint("kind", "source_id", name="uq_system_asset_template_source"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    source_id: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(255))
+    metadata_json: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SystemAssetImport(Base):
+    __tablename__ = "system_asset_imports"
+    __table_args__ = (UniqueConstraint("tenant_id", "template_id", name="uq_system_asset_import_tenant_template"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    template_id: Mapped[str] = mapped_column(ForeignKey("system_asset_templates.id"), index=True)
+    imported_id: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class VoiceProfile(Base):
     __tablename__ = "voice_profiles"
 

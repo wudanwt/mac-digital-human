@@ -24,6 +24,7 @@ from .security import require_superuser
 from .settings import saas_settings
 from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
+from .system_assets_api import router as system_assets_router
 from .worker_status_api import router as worker_status_router
 
 
@@ -98,6 +99,7 @@ def capabilities() -> dict:
         "course_readiness_check": True,
         "course_studio_background_upload": True,
         "course_studio_builtin_backgrounds": True,
+        "system_default_assets": True,
         "render_queue": True,
         "render_job_slide_detail": True,
         "engine_isolated_queues": True,
@@ -149,6 +151,7 @@ for child in (
     course_router,
     course_tools_router,
     backgrounds_router,
+    system_assets_router,
     worker_status_router,
     distributed_worker_internal_router,
     job_detail_router,

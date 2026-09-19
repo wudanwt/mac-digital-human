@@ -143,6 +143,19 @@ JS = r'''
     section.dataset.upgradeBg=marker;const catalog=await themes();
     section.innerHTML=`<h3>演播厅背景</h3><div class="studio-bg-specials"><button class="layout-chip studio-bg-mode" data-upgrade-bg-mode="dark">深色科技</button><button class="layout-chip studio-bg-mode" data-upgrade-bg-mode="blur">PPT 模糊延展</button></div><div class="studio-bg-grid">${catalog.map(t=>`<button type="button" class="studio-bg-card" data-upgrade-bg-theme="${t.id}" data-filename="${t.filename}" id="studioBgTheme-${t.id}"><span>${t.name}</span></button>`).join('')}</div><label class="studio-bg-upload"><div><b>上传自定义背景</b><small>PNG / JPG / WEBP，自动作为工作区私有素材保存</small></div><span>选择图片</span><input id="studioCustomBgFile" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"></label><div class="studio-bg-current" id="studioBgCurrent"></div>`;
     for(const t of catalog){try{document.getElementById('studioBgTheme-'+t.id).style.backgroundImage=`url(${await privateBlob(t.preview_url,'bg-theme:'+t.id)})`}catch(_){}}
+    const ownedBackgrounds=(cache.assets||[]).filter(a=>a.kind==='background');
+    if(ownedBackgrounds.length){
+      const heading=document.createElement('h3');heading.textContent='工作区背景（含已导入的平台素材）';
+      const grid=document.createElement('div');grid.className='studio-bg-grid';
+      for(const asset of ownedBackgrounds){
+        const button=document.createElement('button');button.type='button';button.className='studio-bg-card';
+        const label=document.createElement('span');label.textContent=asset.name;button.appendChild(label);
+        button.onclick=()=>{const ext=(asset.name.match(/\.[^.]+$/)||['.png'])[0].toLowerCase();chooseBackground({mode:'asset',custom_bg:`asset-${asset.id}${ext}`,background_asset_id:asset.id,bg_blur:false})};
+        grid.appendChild(button);
+        try{button.style.backgroundImage=`url(${await privateBlob('/assets/'+asset.id+'/download','bg-asset:'+asset.id)})`}catch(_){}
+      }
+      const upload=section.querySelector('.studio-bg-upload');section.insertBefore(heading,upload);section.insertBefore(grid,upload);
+    }
     section.querySelector('[data-upgrade-bg-mode="dark"]').onclick=()=>chooseBackground({mode:'dark',custom_bg:null,background_asset_id:null,bg_blur:false});
     section.querySelector('[data-upgrade-bg-mode="blur"]').onclick=()=>chooseBackground({mode:'blur',custom_bg:'blur',background_asset_id:null,bg_blur:true});
     section.querySelectorAll('[data-upgrade-bg-theme]').forEach(btn=>btn.onclick=()=>chooseBackground({mode:'builtin',theme_id:btn.dataset.upgradeBgTheme,custom_bg:btn.dataset.filename,background_asset_id:null,bg_blur:false}));

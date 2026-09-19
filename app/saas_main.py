@@ -38,6 +38,7 @@ from .saas.operations_ui import javascript_response as operations_javascript_res
 from .saas.polish_ui import javascript_response as polish_javascript_response
 from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
+from .saas.system_assets_ui import javascript_response as system_assets_javascript_response
 from .saas.theme_ui import css_response as theme_css_response
 from .saas.voice_clone_guard_ui import javascript_response as voice_clone_guard_javascript_response
 from .saas.web import dashboard_html
@@ -97,6 +98,7 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/interaction-patch.js"></script>'
         '<script src="/course-studio.js"></script>'
         '<script src="/course-studio-upgrade.js"></script>'
+        '<script src="/system-assets.js"></script>'
         '<script src="/course-studio-asset-picker.js"></script>'
         '<script src="/course-avatar-mode.js"></script>'
         '<script src="/course-voice.js"></script>'
@@ -194,6 +196,11 @@ def course_studio_script():
 @app.get("/course-studio-upgrade.js", include_in_schema=False)
 def course_studio_upgrade_script():
     return course_studio_upgrade_javascript_response()
+
+
+@app.get("/system-assets.js", include_in_schema=False)
+def system_assets_script():
+    return system_assets_javascript_response()
 
 
 @app.get("/course-studio-asset-picker.js", include_in_schema=False)

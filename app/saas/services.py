@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Asset, AuditLog, Avatar, Membership, Plan, Subscription, UsageLedger
+from .models import Asset, AuditLog, Avatar, Membership, Plan, Subscription, SystemAssetImport, UsageLedger
 from .settings import saas_settings
 
 
@@ -124,7 +124,11 @@ def enforce_storage_limit(db: Session, tenant_id: str, *, incoming_bytes: int = 
 
 def enforce_avatar_limit(db: Session, tenant_id: str) -> None:
     plan = plan_for_tenant(db, tenant_id)
-    count = int(db.scalar(select(func.count()).select_from(Avatar).where(Avatar.tenant_id == tenant_id)) or 0)
+    imported = select(SystemAssetImport.imported_id).where(SystemAssetImport.tenant_id == tenant_id)
+    count = int(db.scalar(select(func.count()).select_from(Avatar).where(
+        Avatar.tenant_id == tenant_id,
+        Avatar.id.not_in(imported),
+    )) or 0)
     if count >= plan.max_avatars:
         raise HTTPException(status_code=402, detail=f"Avatar limit reached ({plan.max_avatars})")
 
