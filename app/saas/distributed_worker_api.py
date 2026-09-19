@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Iterator
 from uuid import uuid4
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings as app_settings
 from .database import get_db
-from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubtask, WorkerNode
+from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubtask, WorkerEnrollment, WorkerNode
 from .distributed_scheduler import (
     LeaseConflict,
     SchedulerError,
@@ -74,6 +74,10 @@ def _worker_token(node_id: str) -> str:
     return f"wrk_{node_id}_{secrets.token_urlsafe(32)}"
 
 
+def _enrollment_code(enrollment_id: str) -> str:
+    return f"enr_{enrollment_id}_{secrets.token_urlsafe(24)}"
+
+
 def _serialize_node(node: WorkerNode) -> dict[str, Any]:
     return {
         "id": node.id,
@@ -103,6 +107,19 @@ def _serialize_node(node: WorkerNode) -> dict[str, Any]:
 class WorkerProvisionRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     slots_total: int = Field(default=1, ge=1, le=4)
+
+
+class WorkerEnrollmentRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    slots_total: int = Field(default=1, ge=1, le=4)
+
+
+class WorkerEnrollRequest(BaseModel):
+    enrollment_code: str = Field(min_length=16, max_length=512)
+    name: str | None = Field(default=None, max_length=120)
+    host: str = Field(default="", max_length=255)
+    platform: str = Field(default="", max_length=255)
+    machine: str = Field(default="", max_length=80)
 
 
 class WorkerAcceptingRequest(BaseModel):
@@ -184,6 +201,95 @@ def provision_worker(
     db.commit()
     db.refresh(node)
     return {"worker": _serialize_node(node), "token": token}
+
+
+@admin_router.post("/enrollments", status_code=201)
+def create_worker_enrollment(
+    body: WorkerEnrollmentRequest,
+    principal: Annotated[Principal, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    del principal
+    node_id = uuid4().hex
+    enrollment_id = uuid4().hex
+    code = _enrollment_code(enrollment_id)
+    now = _now()
+    expires_at = now + timedelta(
+        minutes=max(5, min(1440, saas_settings.distributed_enrollment_minutes))
+    )
+    # WorkerNode keeps its existing non-null/unique credential invariant. This
+    # random pending value is never returned to a client and is atomically
+    # replaced by a real Worker credential when enrollment succeeds.
+    node = WorkerNode(
+        id=node_id,
+        name=body.name.strip(),
+        credential_hash=hash_secret(f"pending:{node_id}:{secrets.token_urlsafe(32)}"),
+        status="pending",
+        accepting_tasks=False,
+        slots_total=body.slots_total,
+        slots_busy=0,
+        render_contract_version="",
+    )
+    enrollment = WorkerEnrollment(
+        id=enrollment_id,
+        node_id=node_id,
+        token_hash=hash_secret(code),
+        expires_at=expires_at,
+        used_at=None,
+    )
+    db.add(node)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(node)
+    return {
+        "worker": _serialize_node(node),
+        "enrollment_code": code,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+@internal_router.post("/enroll")
+def enroll_worker(
+    body: WorkerEnrollRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    digest = hash_secret(body.enrollment_code.strip())
+    enrollment = db.scalar(
+        select(WorkerEnrollment)
+        .where(WorkerEnrollment.token_hash == digest)
+        .with_for_update()
+    )
+    now = _now()
+    if (
+        enrollment is None
+        or enrollment.used_at is not None
+        or as_utc(enrollment.expires_at) <= now
+    ):
+        db.rollback()
+        raise HTTPException(status_code=401, detail="Invalid or expired enrollment code")
+
+    node = db.get(WorkerNode, enrollment.node_id)
+    if node is None or node.status == "revoked":
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Worker enrollment is no longer available")
+
+    token = _worker_token(node.id)
+    node.credential_hash = hash_secret(token)
+    node.accepting_tasks = True
+    node.status = "offline"
+    if body.name and body.name.strip():
+        node.name = body.name.strip()
+    node.host = body.host.strip()
+    node.platform = body.platform.strip()
+    node.machine = body.machine.strip()
+    node.last_error = None
+    enrollment.used_at = now
+    db.commit()
+    db.refresh(node)
+    return {
+        "worker": _serialize_node(node),
+        "token": token,
+    }
 
 
 @admin_router.get("")
