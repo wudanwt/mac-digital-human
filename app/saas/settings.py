@@ -70,6 +70,10 @@ class SaaSSettings:
     # large immutable inputs. Proxy URLs remain available as a fallback so LAN
     # and local-storage deployments keep the existing behavior.
     distributed_direct_downloads: bool = _env_bool("SAAS_DISTRIBUTED_DIRECT_DOWNLOADS", False)
+    # Internet V2: allow page audio/video to bypass the Center data path via
+    # short-lived object-store PUT URLs. The resumable Center upload remains the
+    # compatibility and failure fallback.
+    distributed_direct_uploads: bool = _env_bool("SAAS_DISTRIBUTED_DIRECT_UPLOADS", False)
 
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
