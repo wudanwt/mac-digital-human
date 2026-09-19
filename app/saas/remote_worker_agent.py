@@ -17,6 +17,7 @@ import httpx
 
 
 KEYCHAIN_SERVICE = "com.mac-digital-human.remote-worker"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _default_config_path() -> Path:
@@ -212,6 +213,11 @@ def enroll(
     )
 
 
+def install_launch_agent() -> None:
+    installer = ROOT / "scripts" / "saas" / "install_distributed_launchagent.py"
+    subprocess.run([sys.executable, str(installer), "remote"], check=True)
+
+
 def _print_status() -> None:
     config = load_agent_config()
     token_available = False
@@ -240,6 +246,11 @@ def main() -> None:
     enroll_cmd.add_argument("--center", required=True, help="Center internal render API base")
     enroll_cmd.add_argument("--code", default="", help="one-time enrollment code; omit to enter it without shell history")
     enroll_cmd.add_argument("--name", default="", help="Worker display name")
+    enroll_cmd.add_argument(
+        "--install",
+        action="store_true",
+        help="install/start the user LaunchAgent after successful enrollment",
+    )
 
     sub.add_parser("status", help="show enrolled Center/Worker identity without revealing the credential")
 
@@ -254,6 +265,9 @@ def main() -> None:
             print(f"Enrolled Worker: {runtime.name} ({runtime.worker_id})")
             print(f"Center API      : {runtime.api_base}")
             print("Credential      : stored in macOS Keychain")
+            if args.install:
+                install_launch_agent()
+                print("LaunchAgent     : installed and started")
         elif args.command == "status":
             _print_status()
         elif args.command == "config":
