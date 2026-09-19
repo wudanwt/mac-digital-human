@@ -17,9 +17,6 @@ if [[ -f .env.remote-worker ]]; then
   set +a
 fi
 
-: "${REMOTE_WORKER_API_BASE:?Set REMOTE_WORKER_API_BASE, e.g. https://worker-api.example.com/api/saas/internal/render}"
-: "${REMOTE_WORKER_TOKEN:?Set REMOTE_WORKER_TOKEN to the worker credential printed once when the node is provisioned}"
-
 export SAAS_TTS_PREFETCH=0
 export REMOTE_WORKER_NAME="${REMOTE_WORKER_NAME:-$(scutil --get ComputerName 2>/dev/null || hostname)}"
 export REMOTE_WORKER_RENDER_CONTRACT_VERSION="${REMOTE_WORKER_RENDER_CONTRACT_VERSION:-v1}"
@@ -50,12 +47,24 @@ if ! "$PYTHON_BIN" -c "import httpx, psutil, sqlalchemy" >/dev/null 2>&1; then
   exit 2
 fi
 
+if [[ -z "${REMOTE_WORKER_API_BASE:-}" ]]; then
+  REMOTE_WORKER_API_BASE="$("$PYTHON_BIN" -m app.saas.remote_worker_agent config --field api_base)"
+  export REMOTE_WORKER_API_BASE
+fi
+
+if [[ -z "${REMOTE_WORKER_TOKEN:-}" ]]; then
+  CREDENTIAL_SOURCE="macOS Keychain"
+else
+  CREDENTIAL_SOURCE="environment"
+fi
+
 echo "Remote Page Worker"
 echo "  Center API : $REMOTE_WORKER_API_BASE"
 echo "  Node       : $REMOTE_WORKER_NAME"
 echo "  Contract   : $REMOTE_WORKER_RENDER_CONTRACT_VERSION"
 echo "  Cache      : $REMOTE_WORKER_CACHE_DIR (${REMOTE_WORKER_CACHE_GB}GB)"
 echo "  Disk guard : ${REMOTE_WORKER_MIN_DISK_FREE_GB}GB"
+echo "  Credential : $CREDENTIAL_SOURCE"
 echo "  TTS prefetch: disabled"
 echo
 
