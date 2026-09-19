@@ -31,6 +31,7 @@ services:
       retries: 20
 
   api:
+    image: mac-digital-human-api
     build:
       context: .
       dockerfile: Dockerfile.saas-api

@@ -46,6 +46,20 @@ class WorkerNode(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class WorkerEnrollment(Base):
+    __tablename__ = "worker_enrollments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    node_id: Mapped[str] = mapped_column(
+        ForeignKey("worker_nodes.id", ondelete="CASCADE"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class RenderSubtask(Base):
     __tablename__ = "render_subtasks"
     __table_args__ = (

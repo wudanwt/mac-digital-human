@@ -3,15 +3,17 @@ from __future__ import annotations
 import argparse
 import getpass
 import secrets
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
 
 from .database import SessionLocal
-from .distributed_render_models import WorkerNode
+from .distributed_render_models import WorkerEnrollment, WorkerNode
 from .distributed_scheduler import hash_secret
 from .models import Membership, Tenant, User
 from .security import hash_password
+from .settings import saas_settings
 from .services import active_subscription, unique_slug
 
 
@@ -87,6 +89,48 @@ def create_user(email: str, display_name: str, workspace_name: str, free_trial: 
     print(f"User ready: {email} / workspace={tenant.name} / free_trial={free_trial}")
 
 
+def create_worker_enrollment(name: str, slots: int) -> None:
+    """Provision a pending Worker and print a short-lived one-time enrollment code."""
+
+    clean_name = name.strip()
+    if not clean_name:
+        raise SystemExit("Worker name cannot be empty")
+    slots = max(1, min(4, int(slots)))
+    node_id = uuid4().hex
+    enrollment_id = uuid4().hex
+    code = f"enr_{enrollment_id}_{secrets.token_urlsafe(24)}"
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(
+        minutes=max(5, min(1440, saas_settings.distributed_enrollment_minutes))
+    )
+    with SessionLocal() as db:
+        node = WorkerNode(
+            id=node_id,
+            name=clean_name,
+            credential_hash=hash_secret(f"pending:{node_id}:{secrets.token_urlsafe(32)}"),
+            status="pending",
+            accepting_tasks=False,
+            slots_total=slots,
+            slots_busy=0,
+            render_contract_version="",
+        )
+        enrollment = WorkerEnrollment(
+            id=enrollment_id,
+            node_id=node_id,
+            token_hash=hash_secret(code),
+            expires_at=expires_at,
+            used_at=None,
+        )
+        db.add(node)
+        db.flush()
+        db.add(enrollment)
+        db.commit()
+    print(f"Pending Worker: {clean_name} / id={node_id} / slots={slots}")
+    print(f"Enrollment expires: {expires_at.isoformat()}")
+    print("REMOTE_WORKER_ENROLLMENT_CODE=" + code)
+    print("The code is single-use. The long-lived Worker credential will be stored on the Mac after enrollment.")
+
+
 def create_worker(name: str, slots: int) -> None:
     """Provision one revocable API-only compute worker credential.
 
@@ -137,6 +181,13 @@ def main() -> None:
     worker.add_argument("--name", required=True)
     worker.add_argument("--slots", type=int, default=1)
 
+    enrollment = sub.add_parser(
+        "create-worker-enrollment",
+        help="provision a pending remote Worker and print a one-time enrollment code",
+    )
+    enrollment.add_argument("--name", required=True)
+    enrollment.add_argument("--slots", type=int, default=1)
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin(args.email, args.name, args.workspace)
@@ -144,6 +195,8 @@ def main() -> None:
         create_user(args.email, args.name, args.workspace, args.free_trial)
     elif args.command == "create-worker":
         create_worker(args.name, args.slots)
+    elif args.command == "create-worker-enrollment":
+        create_worker_enrollment(args.name, args.slots)
 
 
 if __name__ == "__main__":

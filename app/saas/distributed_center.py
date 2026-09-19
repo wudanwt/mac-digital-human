@@ -18,7 +18,11 @@ from ..config import settings as app_settings
 from .avatar_matting_service import queue_matting_job, ready_matting_assets
 from .database import SessionLocal
 from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubtask
-from .distributed_scheduler import publish_prepared_pages, reap_expired_page_leases
+from .distributed_scheduler import (
+    publish_prepared_pages,
+    reap_expired_page_leases,
+    reap_stalled_page_attempts,
+)
 from .models import Asset, Avatar, Course, RenderJobRecord
 from .render_core import PageRenderPlan, PageRenderResult, PreparedCourse, RenderWorkspace, finalize_course, prepare_course
 from .render_snapshot_service import load_snapshot_payload
@@ -678,9 +682,13 @@ def run_forever() -> None:
         if now - last_reap >= max(5, saas_settings.distributed_reaper_seconds):
             with SessionLocal() as db:
                 recovered = reap_expired_page_leases(db)
-                if recovered:
+                stalled = reap_stalled_page_attempts(db)
+                if recovered or stalled:
                     db.commit()
+                if recovered:
                     log.warning("Recovered %s expired page leases", recovered)
+                if stalled:
+                    log.warning("Recovered %s stalled page attempts", stalled)
             woke = _wake_waiting_matting()
             if woke:
                 log.info("Requeued %s prepare tasks after matting became ready", woke)

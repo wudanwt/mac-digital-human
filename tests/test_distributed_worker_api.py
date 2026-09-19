@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from io import BytesIO
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
-from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
+from app.saas.distributed_render_models import RenderArtifact, WorkerEnrollment, WorkerNode
+from app.saas.distributed_scheduler import hash_secret, initialize_parent_graph, publish_prepared_pages
+from app.saas.distributed_worker_api import _sha256_path
 from app.saas.models import User
 from app.saas.security import decode_access_token
 from app.saas.settings import saas_settings
@@ -263,3 +271,504 @@ def test_worker_api_auth_range_resume_and_idempotent_complete() -> None:
             assert repeated.json()["idempotent"] is True
     finally:
         object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+
+
+def test_worker_artifact_hash_streams_file(monkeypatch, tmp_path: Path) -> None:
+    payload = b"x" * (3 * 1024 * 1024 + 17)
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: (_ for _ in ()).throw(AssertionError("read_bytes must not be used for artifact hashing")),
+    )
+    assert _sha256_path(path) == hashlib.sha256(payload).hexdigest()
+
+
+def test_incompatible_worker_recovers_after_compatible_registration() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+        provision = client.post(
+            "/api/saas/distributed/workers",
+            headers=_headers(token),
+            json={"name": "recovering-mini", "slots_total": 1},
+        )
+        assert provision.status_code == 201, provision.text
+        worker_token = provision.json()["token"]
+        worker_headers = {"Authorization": f"Bearer {worker_token}"}
+        base_payload = {
+            "name": "recovering-mini",
+            "host": "recovering-mini.local",
+            "platform": "macOS",
+            "machine": "arm64",
+            "slots_total": 1,
+            "capabilities": ["musetalk"],
+            "versions": {"test": "1"},
+            "code_version": "0.5.0",
+            "model_version": "musetalk-mlx",
+        }
+
+        rejected = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={**base_payload, "render_contract_version": "outdated-contract"},
+        )
+        assert rejected.status_code == 409, rejected.text
+
+        workers = client.get("/api/saas/distributed/workers", headers=_headers(token))
+        assert workers.status_code == 200, workers.text
+        rejected_node = next(item for item in workers.json() if item["name"] == "recovering-mini")
+        assert rejected_node["status"] == "incompatible"
+        assert rejected_node["accepting_tasks"] is False
+
+        recovered = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={**base_payload, "render_contract_version": saas_settings.render_contract_version},
+        )
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["worker"]["accepting_tasks"] is True
+        assert recovered.json()["worker"]["status"] == "online"
+
+
+def test_worker_descriptor_prefers_signed_download_and_keeps_proxy_fallback(monkeypatch) -> None:
+    original = saas_settings.distributed_direct_downloads
+    object.__setattr__(saas_settings, "distributed_direct_downloads", True)
+    monkeypatch.setattr(
+        distributed_worker_api.object_store,
+        "signed_get_url",
+        lambda key: f"https://objects.example.test/{key}?signature=abc",
+    )
+    try:
+        descriptor = distributed_worker_api._file_descriptor(
+            SimpleNamespace(
+                id="asset-1",
+                name="master.mp4",
+                content_type="video/mp4",
+                size_bytes=123,
+                sha256="abc123",
+                object_key="tenant/assets/master.mp4",
+            ),
+            task_id="task-1",
+        )
+        assert descriptor["transfer_mode"] == "direct"
+        assert descriptor["url"].startswith("https://objects.example.test/tenant/assets/master.mp4")
+        assert descriptor["fallback_url"] == "/api/saas/internal/render/tasks/task-1/assets/asset-1"
+        assert descriptor["url_expires_in"] == saas_settings.storage_signed_url_seconds
+    finally:
+        object.__setattr__(saas_settings, "distributed_direct_downloads", original)
+
+
+def test_worker_descriptor_uses_proxy_when_direct_downloads_disabled(monkeypatch) -> None:
+    original = saas_settings.distributed_direct_downloads
+    object.__setattr__(saas_settings, "distributed_direct_downloads", False)
+    monkeypatch.setattr(
+        distributed_worker_api.object_store,
+        "signed_get_url",
+        lambda _key: (_ for _ in ()).throw(AssertionError("signing should not run")),
+    )
+    try:
+        descriptor = distributed_worker_api._file_descriptor(
+            SimpleNamespace(
+                id="asset-2",
+                name="reference.wav",
+                content_type="audio/wav",
+                size_bytes=456,
+                sha256="def456",
+                object_key="tenant/assets/reference.wav",
+            ),
+            task_id="task-2",
+        )
+        assert descriptor["transfer_mode"] == "proxy"
+        assert descriptor["url"] == "/api/saas/internal/render/tasks/task-2/assets/asset-2"
+        assert descriptor["fallback_url"] is None
+    finally:
+        object.__setattr__(saas_settings, "distributed_direct_downloads", original)
+
+
+def test_direct_artifact_upload_session_commit_and_idempotency(monkeypatch) -> None:
+    original_enabled = saas_settings.distributed_render_enabled
+    original_direct = saas_settings.distributed_direct_uploads
+    object.__setattr__(saas_settings, "distributed_render_enabled", True)
+    object.__setattr__(saas_settings, "distributed_direct_uploads", True)
+    try:
+        with TestClient(app) as client:
+            user_token = _register_user(client)
+            parent_job_id, _ppt, master, _audio = _parent(client, user_token)
+            with SessionLocal() as db:
+                initialize_parent_graph(db, parent_job_id)
+                publish_prepared_pages(
+                    db,
+                    parent_job_id=parent_job_id,
+                    pages=[
+                        {
+                            "index": 1,
+                            "narration": "direct upload",
+                            "estimated_seconds": 5,
+                            "master_video_asset_id": master["id"],
+                        }
+                    ],
+                )
+                db.commit()
+
+            _promote_superuser(user_token)
+            provision = client.post(
+                "/api/saas/distributed/workers",
+                headers=_headers(user_token),
+                json={"name": "direct-upload-mini", "slots_total": 1},
+            )
+            assert provision.status_code == 201, provision.text
+            worker_headers = {"Authorization": f"Bearer {provision.json()['token']}"}
+            register = client.post(
+                "/api/saas/internal/render/register",
+                headers=worker_headers,
+                json={
+                    "name": "direct-upload-mini",
+                    "host": "direct-upload-mini.local",
+                    "platform": "macOS",
+                    "machine": "arm64",
+                    "slots_total": 1,
+                    "capabilities": ["musetalk"],
+                    "versions": {"test": "1"},
+                    "code_version": "0.5.0",
+                    "model_version": "musetalk-mlx",
+                    "render_contract_version": saas_settings.render_contract_version,
+                },
+            )
+            assert register.status_code == 200, register.text
+
+            claim = client.post("/api/saas/internal/render/tasks/claim", headers=worker_headers)
+            assert claim.status_code == 200, claim.text
+            task = claim.json()["task"]
+            assert task is not None
+            lease_headers = {
+                **worker_headers,
+                "X-Attempt-Id": task["attempt_id"],
+                "X-Lease-Token": task["lease_token"],
+            }
+
+            payload = b"direct-page-video"
+            digest = hashlib.sha256(payload).hexdigest()
+            signed_keys: list[str] = []
+            monkeypatch.setattr(
+                distributed_worker_api.object_store,
+                "signed_put_url",
+                lambda key: signed_keys.append(key) or f"https://objects.example.test/{key}?signature=put",
+            )
+            monkeypatch.setattr(
+                distributed_worker_api.object_store,
+                "object_size",
+                lambda key: len(payload) if key in signed_keys else None,
+            )
+
+            session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-upload",
+                headers=lease_headers,
+                json={"size_bytes": len(payload), "sha256": digest},
+            )
+            assert session.status_code == 200, session.text
+            session_body = session.json()
+            assert session_body["mode"] == "direct"
+            assert session_body["object_key"].endswith(
+                f"/attempts/{task['attempt_id']}/page_video.mp4"
+            )
+            assert session_body["upload_url"].startswith("https://objects.example.test/")
+
+            wrong_key = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": "another-tenant/forbidden.mp4",
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert wrong_key.status_code == 409
+
+            committed = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": session_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert committed.status_code == 200, committed.text
+            assert committed.json()["completed"] is True
+
+            repeated = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": session_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert repeated.status_code == 200, repeated.text
+            assert repeated.json()["idempotent"] is True
+
+            audio_session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-upload",
+                headers=lease_headers,
+                json={"size_bytes": len(payload), "sha256": digest},
+            )
+            assert audio_session.status_code == 200, audio_session.text
+            audio_body = audio_session.json()
+            audio_commit = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": audio_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert audio_commit.status_code == 200, audio_commit.text
+
+            completed = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/complete",
+                headers=worker_headers,
+                json={
+                    "attempt_id": task["attempt_id"],
+                    "lease_token": task["lease_token"],
+                    "metrics": {"render_seconds": 1.0},
+                    "media": {
+                        "video_seconds": 1.0,
+                        "audio_seconds": 1.0,
+                        "frame_count": 25,
+                        "encoding": {
+                            "width": 1280,
+                            "height": 720,
+                            "fps": "25/1",
+                            "pix_fmt": "yuv420p",
+                            "video_codec": "h264",
+                            "audio_codec": "aac",
+                            "audio_sample_rate": 24000,
+                            "audio_channels": 1,
+                        },
+                    },
+                },
+            )
+            assert completed.status_code == 200, completed.text
+
+            with SessionLocal() as db:
+                artifact = db.scalar(
+                    select(RenderArtifact).where(
+                        RenderArtifact.attempt_id == task["attempt_id"],
+                        RenderArtifact.kind == "page_video",
+                    )
+                )
+                assert artifact is not None
+                assert artifact.object_key == session_body["object_key"]
+                assert artifact.size_bytes == len(payload)
+                assert artifact.sha256 == digest
+                metadata = json.loads(artifact.metadata_json)
+                assert metadata["transfer_mode"] == "direct"
+                assert metadata["media"]["frame_count"] == 25
+    finally:
+        object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+        object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
+
+
+def test_direct_artifact_upload_falls_back_when_backend_cannot_sign(monkeypatch) -> None:
+    original_enabled = saas_settings.distributed_render_enabled
+    original_direct = saas_settings.distributed_direct_uploads
+    object.__setattr__(saas_settings, "distributed_render_enabled", True)
+    object.__setattr__(saas_settings, "distributed_direct_uploads", True)
+    try:
+        with TestClient(app) as client:
+            user_token = _register_user(client)
+            parent_job_id, _ppt, master, _audio = _parent(client, user_token)
+            with SessionLocal() as db:
+                initialize_parent_graph(db, parent_job_id)
+                publish_prepared_pages(
+                    db,
+                    parent_job_id=parent_job_id,
+                    pages=[
+                        {
+                            "index": 1,
+                            "narration": "proxy fallback",
+                            "estimated_seconds": 5,
+                            "master_video_asset_id": master["id"],
+                        }
+                    ],
+                )
+                db.commit()
+
+            _promote_superuser(user_token)
+            provision = client.post(
+                "/api/saas/distributed/workers",
+                headers=_headers(user_token),
+                json={"name": "proxy-fallback-mini", "slots_total": 1},
+            )
+            worker_headers = {"Authorization": f"Bearer {provision.json()['token']}"}
+            register = client.post(
+                "/api/saas/internal/render/register",
+                headers=worker_headers,
+                json={
+                    "name": "proxy-fallback-mini",
+                    "host": "proxy-fallback-mini.local",
+                    "platform": "macOS",
+                    "machine": "arm64",
+                    "slots_total": 1,
+                    "capabilities": ["musetalk"],
+                    "versions": {},
+                    "code_version": "0.5.0",
+                    "model_version": "musetalk-mlx",
+                    "render_contract_version": saas_settings.render_contract_version,
+                },
+            )
+            assert register.status_code == 200, register.text
+            claim = client.post("/api/saas/internal/render/tasks/claim", headers=worker_headers)
+            task = claim.json()["task"]
+            assert task is not None
+            lease_headers = {
+                **worker_headers,
+                "X-Attempt-Id": task["attempt_id"],
+                "X-Lease-Token": task["lease_token"],
+            }
+            monkeypatch.setattr(distributed_worker_api.object_store, "signed_put_url", lambda _key: None)
+            payload = b"fallback"
+            session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-upload",
+                headers=lease_headers,
+                json={
+                    "size_bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                },
+            )
+            assert session.status_code == 200, session.text
+            assert session.json() == {"mode": "proxy", "completed": False}
+    finally:
+        object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+        object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
+
+
+def test_worker_enrollment_is_single_use_and_issues_real_credential() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+
+        created = client.post(
+            "/api/saas/distributed/workers/enrollments",
+            headers=_headers(token),
+            json={"name": "remote-enroll-mini", "slots_total": 1},
+        )
+        assert created.status_code == 201, created.text
+        payload = created.json()
+        code = payload["enrollment_code"]
+        node_id = payload["worker"]["id"]
+        assert code.startswith("enr_")
+        assert payload["worker"]["status"] == "pending"
+        assert payload["worker"]["accepting_tasks"] is False
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            node = db.get(WorkerNode, node_id)
+            assert enrollment is not None
+            assert node is not None
+            assert enrollment.token_hash == hash_secret(code)
+            assert enrollment.token_hash != code
+            assert enrollment.used_at is None
+            pending_hash = node.credential_hash
+
+        enrolled = client.post(
+            "/api/saas/internal/render/enroll",
+            json={
+                "enrollment_code": code,
+                "name": "remote-enroll-mini",
+                "host": "remote-enroll-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+            },
+        )
+        assert enrolled.status_code == 200, enrolled.text
+        worker_token = enrolled.json()["token"]
+        assert worker_token.startswith(f"wrk_{node_id}_")
+        assert enrolled.json()["worker"]["status"] == "offline"
+        assert enrolled.json()["worker"]["accepting_tasks"] is True
+
+        replay = client.post(
+            "/api/saas/internal/render/enroll",
+            json={"enrollment_code": code},
+        )
+        assert replay.status_code == 401
+
+        worker_headers = {"Authorization": f"Bearer {worker_token}"}
+        original_enabled = saas_settings.distributed_render_enabled
+        object.__setattr__(saas_settings, "distributed_render_enabled", True)
+        try:
+            pre_register_claim = client.post(
+                "/api/saas/internal/render/tasks/claim",
+                headers=worker_headers,
+            )
+            assert pre_register_claim.status_code == 409
+        finally:
+            object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+
+        register = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={
+                "name": "remote-enroll-mini",
+                "host": "remote-enroll-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+                "slots_total": 1,
+                "capabilities": ["musetalk"],
+                "versions": {"agent": "v3"},
+                "code_version": "0.5.0",
+                "model_version": "musetalk-mlx",
+                "render_contract_version": saas_settings.render_contract_version,
+            },
+        )
+        assert register.status_code == 200, register.text
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            node = db.get(WorkerNode, node_id)
+            assert enrollment is not None and enrollment.used_at is not None
+            assert node is not None
+            assert node.credential_hash == hash_secret(worker_token)
+            assert node.credential_hash != pending_hash
+
+
+def test_expired_worker_enrollment_is_rejected() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+        created = client.post(
+            "/api/saas/distributed/workers/enrollments",
+            headers=_headers(token),
+            json={"name": "expired-enroll-mini", "slots_total": 1},
+        )
+        assert created.status_code == 201, created.text
+        code = created.json()["enrollment_code"]
+        node_id = created.json()["worker"]["id"]
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            assert enrollment is not None
+            enrollment.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+
+        expired = client.post(
+            "/api/saas/internal/render/enroll",
+            json={"enrollment_code": code},
+        )
+        assert expired.status_code == 401
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            assert enrollment is not None
+            assert enrollment.used_at is None

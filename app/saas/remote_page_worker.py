@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+import ipaddress
 import json
 import logging
 import os
@@ -38,11 +39,19 @@ from .worker_entry import (
 log = logging.getLogger("digital-human.saas.remote-page-worker")
 
 
+def worker_lock_path(cache_dir: Path) -> Path:
+    """Place the process lock outside the evictable content cache."""
+    resolved = cache_dir.expanduser().resolve()
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    return resolved.parent / ".remote-worker-locks" / f"{digest}.lock"
+
+
 @contextmanager
 def worker_instance_lock(cache_dir: Path):
     """Keep one page-worker process per cache/model runtime on a Mac."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = cache_dir / ".remote-page-worker.lock"
+    lock_path = worker_lock_path(cache_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
     try:
         try:
@@ -78,17 +87,34 @@ class RemoteWorkerConfig:
 
     @classmethod
     def from_env(cls) -> "RemoteWorkerConfig":
-        api_base = os.getenv(
-            "REMOTE_WORKER_API_BASE",
-            "http://127.0.0.1:8918/api/saas/internal/render",
-        ).rstrip("/")
+        api_base_env = os.getenv("REMOTE_WORKER_API_BASE", "").strip()
         token = os.getenv("REMOTE_WORKER_TOKEN", "").strip()
+        agent_runtime = None
         if not token:
-            raise RuntimeError("REMOTE_WORKER_TOKEN is required")
+            try:
+                from .remote_worker_agent import load_agent_runtime
+
+                agent_runtime = load_agent_runtime()
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "REMOTE_WORKER_TOKEN is not set and no enrolled macOS Keychain credential is available"
+                ) from exc
+            token = agent_runtime.token
+        api_base = (
+            api_base_env
+            or (agent_runtime.api_base if agent_runtime is not None else "")
+            or "http://127.0.0.1:8918/api/saas/internal/render"
+        ).rstrip("/")
+        env_name = os.getenv("REMOTE_WORKER_NAME", "").strip()
+        default_name = (
+            agent_runtime.name
+            if agent_runtime is not None and agent_runtime.name
+            else socket.gethostname()
+        )
         return cls(
             api_base=api_base,
             token=token,
-            name=os.getenv("REMOTE_WORKER_NAME", socket.gethostname()).strip() or socket.gethostname(),
+            name=env_name or default_name,
             code_version=os.getenv("REMOTE_WORKER_CODE_VERSION", "0.5.0").strip(),
             model_version=os.getenv("REMOTE_WORKER_MODEL_VERSION", "musetalk-mlx").strip(),
             render_contract_version=os.getenv(
@@ -143,6 +169,19 @@ class LeaseLost(RuntimeError):
     pass
 
 
+def _is_private_or_local_host(hostname: str | None) -> bool:
+    host = (hostname or "").strip().lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -195,18 +234,37 @@ class RemoteApi:
         parsed = urlsplit(config.api_base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("REMOTE_WORKER_API_BASE must be an absolute http(s) URL")
+        allow_insecure = os.getenv("REMOTE_WORKER_ALLOW_INSECURE_HTTP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if parsed.scheme == "http" and not _is_private_or_local_host(parsed.hostname) and not allow_insecure:
+            raise RuntimeError(
+                "public remote Center endpoints must use HTTPS; "
+                "set REMOTE_WORKER_ALLOW_INSECURE_HTTP=1 only for a trusted private network"
+            )
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
-        # A base URL is intentional: task manifests use same-origin relative
-        # download URLs so the center never has to expose its object-store URL.
-        self.client = httpx.Client(
+        # Control-plane credentials must never be sent to object storage.
+        # Keep authenticated Center traffic and unauthenticated signed-URL
+        # transfers on separate clients.
+        timeout = httpx.Timeout(config.request_timeout_seconds, connect=15.0)
+        self.control_client = httpx.Client(
             base_url=self.origin,
             headers={"Authorization": f"Bearer {config.token}"},
-            timeout=httpx.Timeout(config.request_timeout_seconds, connect=15.0),
+            timeout=timeout,
             trust_env=False,
+        )
+        self.transfer_client = httpx.Client(
+            timeout=timeout,
+            trust_env=False,
+            follow_redirects=True,
         )
 
     def close(self) -> None:
-        self.client.close()
+        self.control_client.close()
+        self.transfer_client.close()
 
     def _url(self, suffix: str) -> str:
         return f"{self.config.api_base}/{suffix.lstrip('/')}"
@@ -228,7 +286,7 @@ class RemoteApi:
         raise RuntimeError(f"center API {response.status_code}: {detail}")
 
     def register(self) -> dict[str, Any]:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url("register"),
             json={
                 "name": self.config.name,
@@ -258,7 +316,7 @@ class RemoteApi:
     ) -> dict[str, Any]:
         usage = shutil.disk_usage(self.config.cache_dir)
         memory = psutil.virtual_memory()
-        response = self.client.post(
+        response = self.control_client.post(
             self._url("heartbeat"),
             json={
                 "current_task_id": current_task_id,
@@ -271,13 +329,13 @@ class RemoteApi:
         return response.json()
 
     def claim(self) -> dict[str, Any] | None:
-        response = self.client.post(self._url("tasks/claim"))
+        response = self.control_client.post(self._url("tasks/claim"))
         self._raise(response)
         payload = response.json()
         return payload.get("task") if isinstance(payload, dict) else None
 
     def renew(self, task: dict[str, Any]) -> str:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/renew"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -294,7 +352,7 @@ class RemoteApi:
         stage: str,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/progress"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -313,7 +371,7 @@ class RemoteApi:
         retryable: bool,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/fail"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -332,7 +390,7 @@ class RemoteApi:
         metrics: dict[str, Any],
         media: dict[str, Any],
     ) -> dict[str, Any]:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/complete"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -351,6 +409,55 @@ class RemoteApi:
             "X-Lease-Token": task["lease_token"],
         }
 
+    def _download_candidates(
+        self,
+        task: dict[str, Any],
+        descriptor: dict[str, Any],
+    ) -> list[tuple[str, httpx.Client, str, dict[str, str]]]:
+        mode = str(descriptor.get("transfer_mode") or "proxy").lower()
+        if mode == "direct":
+            direct_url = str(descriptor.get("url") or "")
+            if not direct_url.startswith(("http://", "https://")):
+                raise RuntimeError("direct download URL must be absolute")
+            direct_parts = urlsplit(direct_url)
+            fallback = str(descriptor.get("fallback_url") or "")
+            if direct_parts.scheme == "http" and not _is_private_or_local_host(direct_parts.hostname):
+                if not fallback:
+                    raise RuntimeError("public direct download URLs must use HTTPS")
+                log.warning(
+                    "Ignoring insecure public direct download URL for %s; using Center proxy",
+                    descriptor.get("id"),
+                )
+                return [
+                    (
+                        "proxy",
+                        self.control_client,
+                        self._resource_url(fallback),
+                        self._lease_headers(task),
+                    )
+                ]
+            candidates: list[tuple[str, httpx.Client, str, dict[str, str]]] = [
+                ("direct", self.transfer_client, direct_url, {}),
+            ]
+            if fallback:
+                candidates.append(
+                    (
+                        "proxy",
+                        self.control_client,
+                        self._resource_url(fallback),
+                        self._lease_headers(task),
+                    )
+                )
+            return candidates
+        return [
+            (
+                "proxy",
+                self.control_client,
+                self._resource_url(str(descriptor["url"])),
+                self._lease_headers(task),
+            )
+        ]
+
     def download(
         self,
         task: dict[str, Any],
@@ -359,21 +466,45 @@ class RemoteApi:
     ) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
         part = destination.with_suffix(destination.suffix + ".part")
-        existing = part.stat().st_size if part.exists() else 0
-        headers = self._lease_headers(task)
-        if existing:
-            headers["Range"] = f"bytes={existing}-"
-        resource_url = self._resource_url(str(descriptor["url"]))
-        with self.client.stream("GET", resource_url, headers=headers) as response:
-            if existing and response.status_code == 200:
-                part.unlink(missing_ok=True)
-                existing = 0
-            if response.status_code not in {200, 206}:
-                self._raise(response)
-            mode = "ab" if existing and response.status_code == 206 else "wb"
-            with part.open(mode) as fh:
-                for chunk in response.iter_bytes(1024 * 1024):
-                    fh.write(chunk)
+        candidates = self._download_candidates(task, descriptor)
+        last_error: Exception | None = None
+        downloaded = False
+
+        for mode_name, client, resource_url, base_headers in candidates:
+            existing = part.stat().st_size if part.exists() else 0
+            headers = dict(base_headers)
+            if existing:
+                headers["Range"] = f"bytes={existing}-"
+            try:
+                with client.stream("GET", resource_url, headers=headers) as response:
+                    if response.status_code not in {200, 206}:
+                        if mode_name == "direct":
+                            raise RuntimeError(f"direct download returned HTTP {response.status_code}")
+                        self._raise(response)
+                    if existing and response.status_code == 200:
+                        part.unlink(missing_ok=True)
+                        existing = 0
+                    file_mode = "ab" if existing and response.status_code == 206 else "wb"
+                    with part.open(file_mode) as fh:
+                        for chunk in response.iter_bytes(1024 * 1024):
+                            fh.write(chunk)
+                downloaded = True
+                break
+            except (httpx.HTTPError, RuntimeError) as exc:
+                last_error = exc
+                if mode_name == "direct" and len(candidates) > 1:
+                    log.warning(
+                        "Direct object-store download failed for %s; falling back to Center proxy: %s",
+                        descriptor.get("id"),
+                        exc,
+                    )
+                    continue
+                raise
+
+        if not downloaded:
+            raise RuntimeError(
+                f"unable to download {descriptor.get('id')}: {last_error or 'no usable transfer route'}"
+            )
 
         expected_size = int(descriptor.get("size_bytes") or 0)
         if expected_size and part.stat().st_size != expected_size:
@@ -387,6 +518,102 @@ class RemoteApi:
         os.utime(destination, None)
         return destination
 
+    def _direct_upload_url_allowed(self, value: str) -> bool:
+        parsed = urlsplit(value)
+        if parsed.scheme == "https":
+            return bool(parsed.netloc)
+        if parsed.scheme == "http" and parsed.netloc:
+            return _is_private_or_local_host(parsed.hostname)
+        return False
+
+    def _try_direct_upload(
+        self,
+        task: dict[str, Any],
+        *,
+        kind: str,
+        source: Path,
+        size_bytes: int,
+        sha256: str,
+        headers: dict[str, str],
+    ) -> dict[str, Any] | None:
+        session_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/direct-upload")
+        response = self.control_client.post(
+            session_url,
+            headers=headers,
+            json={"size_bytes": size_bytes, "sha256": sha256},
+        )
+        # A V2 Worker can still talk to an older V1 Center when compatibility
+        # gates are intentionally relaxed.
+        if response.status_code in {404, 405}:
+            return None
+        self._raise(response)
+        session = response.json()
+        if session.get("completed") or session.get("mode") == "completed":
+            if session.get("sha256") and session["sha256"] != sha256:
+                raise RuntimeError(f"center already has a different {kind} artifact")
+            return session
+        if session.get("mode") != "direct":
+            return None
+
+        upload_url = str(session.get("upload_url") or "")
+        object_key = str(session.get("object_key") or "")
+        if not self._direct_upload_url_allowed(upload_url):
+            log.warning("Direct upload URL is not safe/reachable for %s; using Center proxy", kind)
+            return None
+        if not object_key:
+            raise RuntimeError("direct upload session is missing object_key")
+
+        try:
+            with source.open("rb") as fh:
+                def chunks():
+                    while True:
+                        chunk = fh.read(1024 * 1024)
+                        if not chunk:
+                            return
+                        yield chunk
+
+                direct_response = self.transfer_client.put(
+                    upload_url,
+                    headers={"Content-Length": str(size_bytes)},
+                    content=chunks(),
+                )
+            if not direct_response.is_success:
+                log.warning(
+                    "Direct object-store upload failed for %s with HTTP %s; using Center proxy",
+                    kind,
+                    direct_response.status_code,
+                )
+                return None
+        except httpx.HTTPError as exc:
+            log.warning("Direct object-store upload failed for %s; using Center proxy: %s", kind, exc)
+            return None
+
+        commit_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/direct-commit")
+        payload = {
+            "object_key": object_key,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+        }
+        for retry in range(3):
+            commit = self.control_client.post(commit_url, headers=headers, json=payload)
+            if commit.is_success:
+                return commit.json()
+            # A just-written object can briefly be unavailable through some
+            # S3-compatible gateways. Retry only that specific verification
+            # failure; lease/auth/ownership conflicts must surface immediately.
+            detail = commit.text
+            if commit.status_code in {409, 503} and (
+                "Direct upload object is not available" in detail
+                or "Unable to verify direct upload" in detail
+            ):
+                if retry < 2:
+                    time.sleep(0.5 * (2**retry))
+                    continue
+                log.warning("Direct upload commit could not verify %s; using Center proxy", kind)
+                return None
+            self._raise(commit)
+        return None
+
     def upload(
         self,
         task: dict[str, Any],
@@ -397,7 +624,7 @@ class RemoteApi:
         digest = _sha256(source)
         headers = self._lease_headers(task)
         status_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/upload")
-        response = self.client.get(status_url, headers=headers)
+        response = self.control_client.get(status_url, headers=headers)
         self._raise(response)
         status = response.json()
         if status.get("completed"):
@@ -405,8 +632,19 @@ class RemoteApi:
                 raise RuntimeError(f"center already has a different {kind} artifact")
             return status
 
-        offset = int(status.get("received_bytes") or 0)
         total = source.stat().st_size
+        direct = self._try_direct_upload(
+            task,
+            kind=kind,
+            source=source,
+            size_bytes=total,
+            sha256=digest,
+            headers=headers,
+        )
+        if direct is not None:
+            return direct
+
+        offset = int(status.get("received_bytes") or 0)
         if offset > total:
             raise RuntimeError(f"center upload offset exceeds local file for {kind}")
         upload_url = self._url(f"tasks/{task['id']}/artifacts/{kind}")
@@ -424,7 +662,7 @@ class RemoteApi:
                 }
                 if end + 1 == total:
                     chunk_headers["X-Content-SHA256"] = digest
-                response = self.client.put(
+                response = self.control_client.put(
                     upload_url,
                     headers=chunk_headers,
                     content=chunk,
@@ -553,6 +791,18 @@ class RemotePageWorker:
         self._stop = threading.Event()
         self.avatar_engine = ContextualMatteMuseTalkEngine(MuseTalkMLXEngine())
         self.composer = MatteAwareCourseComposer(CourseComposer().config)
+
+    @staticmethod
+    def _attempt_root() -> Path:
+        return app_settings.workspace_dir / "remote-page-worker"
+
+    def _cleanup_stale_attempt_workspaces(self) -> None:
+        root = self._attempt_root()
+        if not root.exists():
+            return
+        for path in root.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
 
     def register(self) -> None:
         payload = self.api.register()
@@ -802,6 +1052,7 @@ class RemotePageWorker:
         self._current_task_id = task["id"]
         self._last_error = None
         started = time.time()
+        attempt_work = self._attempt_root() / task["attempt_id"]
         try:
             with LeaseKeeper(
                 self.api,
@@ -839,10 +1090,14 @@ class RemotePageWorker:
                 log.warning("Unable to report task failure: %s", report_exc)
         finally:
             self._current_task_id = None
-            self.cache.release_all()
+            try:
+                self.cache.release_all()
+            finally:
+                shutil.rmtree(attempt_work, ignore_errors=True)
 
     def run_forever(self) -> None:
         self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_stale_attempt_workspaces()
         self.register()
         heartbeat = self.start_heartbeat()
         try:
@@ -854,6 +1109,7 @@ class RemotePageWorker:
                     except Exception:
                         pass
                     self.cache.cleanup()
+                    self._cleanup_stale_attempt_workspaces()
                     time.sleep(5)
                     continue
                 self._last_error = None

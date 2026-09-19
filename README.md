@@ -114,6 +114,14 @@ bash scripts/saas/start_mlx_worker_mac.sh
 
 详细说明见：[`docs/MAC_MLX_SAAS.md`](docs/MAC_MLX_SAAS.md)。
 
+### 公网 Remote Worker
+
+Page-level distributed Worker 支持 API-only 模式：异地 Mac 只需要主动访问 Center HTTPS，不需要 PostgreSQL、Redis 或对象存储凭据。生产对象存储为 S3 / OSS / COS 时，可开启短时 Signed URL 直下/直传，大文件不再经过 FastAPI；直连失败会自动回退 Center proxy。
+
+Remote Worker V3 支持一次性 Enrollment Code：管理员无需分发长期 Worker Token，目标 Mac 自助换取凭据后写入 macOS Keychain，并可安装 LaunchAgent 自动启动。运营后台可查看 Worker 状态、版本、槽位并执行 Drain / 恢复 / 吊销。
+
+部署与验收步骤见：[`docs/REMOTE_WORKER_INTERNET.md`](docs/REMOTE_WORKER_INTERNET.md)。
+
 ## 透明讲师资产工作流
 
 透明抠像发生在数字人资产阶段，而不是每次课程生成时重复执行：
