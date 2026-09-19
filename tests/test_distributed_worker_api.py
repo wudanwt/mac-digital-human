@@ -7,6 +7,7 @@ from io import BytesIO
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
