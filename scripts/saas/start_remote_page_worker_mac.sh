@@ -17,7 +17,7 @@ if [[ -f .env.remote-worker ]]; then
   set +a
 fi
 
-: "${REMOTE_WORKER_API_BASE:?Set REMOTE_WORKER_API_BASE, e.g. http://192.168.1.10:8918/api/saas/internal/render}"
+: "${REMOTE_WORKER_API_BASE:?Set REMOTE_WORKER_API_BASE, e.g. https://worker-api.example.com/api/saas/internal/render}"
 : "${REMOTE_WORKER_TOKEN:?Set REMOTE_WORKER_TOKEN to the one-time credential returned by the center admin API}"
 
 export SAAS_TTS_PREFETCH=0
