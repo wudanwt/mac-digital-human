@@ -42,6 +42,14 @@ def main() -> None:
     agent_path.chmod(0o600)
 
     domain = f"gui/{os.getuid()}"
+    # Make installation idempotent so re-enrollment or agent upgrades can
+    # safely refresh the service definition.
+    subprocess.run(
+        ["launchctl", "bootout", f"{domain}/{label}"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     subprocess.run(["launchctl", "bootstrap", domain, str(agent_path)], check=True)
     print(f"Started {label} in {domain}")
 
