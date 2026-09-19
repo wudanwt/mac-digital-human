@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from io import BytesIO
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
 from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
 from app.saas.distributed_worker_api import _sha256_path
@@ -324,3 +326,58 @@ def test_incompatible_worker_recovers_after_compatible_registration() -> None:
         assert recovered.status_code == 200, recovered.text
         assert recovered.json()["worker"]["accepting_tasks"] is True
         assert recovered.json()["worker"]["status"] == "online"
+
+
+def test_worker_descriptor_prefers_signed_download_and_keeps_proxy_fallback(monkeypatch) -> None:
+    original = saas_settings.distributed_direct_downloads
+    object.__setattr__(saas_settings, "distributed_direct_downloads", True)
+    monkeypatch.setattr(
+        distributed_worker_api.object_store,
+        "signed_get_url",
+        lambda key: f"https://objects.example.test/{key}?signature=abc",
+    )
+    try:
+        descriptor = distributed_worker_api._file_descriptor(
+            SimpleNamespace(
+                id="asset-1",
+                name="master.mp4",
+                content_type="video/mp4",
+                size_bytes=123,
+                sha256="abc123",
+                object_key="tenant/assets/master.mp4",
+            ),
+            task_id="task-1",
+        )
+        assert descriptor["transfer_mode"] == "direct"
+        assert descriptor["url"].startswith("https://objects.example.test/tenant/assets/master.mp4")
+        assert descriptor["fallback_url"] == "/api/saas/internal/render/tasks/task-1/assets/asset-1"
+        assert descriptor["url_expires_in"] == saas_settings.storage_signed_url_seconds
+    finally:
+        object.__setattr__(saas_settings, "distributed_direct_downloads", original)
+
+
+def test_worker_descriptor_uses_proxy_when_direct_downloads_disabled(monkeypatch) -> None:
+    original = saas_settings.distributed_direct_downloads
+    object.__setattr__(saas_settings, "distributed_direct_downloads", False)
+    monkeypatch.setattr(
+        distributed_worker_api.object_store,
+        "signed_get_url",
+        lambda _key: (_ for _ in ()).throw(AssertionError("signing should not run")),
+    )
+    try:
+        descriptor = distributed_worker_api._file_descriptor(
+            SimpleNamespace(
+                id="asset-2",
+                name="reference.wav",
+                content_type="audio/wav",
+                size_bytes=456,
+                sha256="def456",
+                object_key="tenant/assets/reference.wav",
+            ),
+            task_id="task-2",
+        )
+        assert descriptor["transfer_mode"] == "proxy"
+        assert descriptor["url"] == "/api/saas/internal/render/tasks/task-2/assets/asset-2"
+        assert descriptor["fallback_url"] is None
+    finally:
+        object.__setattr__(saas_settings, "distributed_direct_downloads", original)
