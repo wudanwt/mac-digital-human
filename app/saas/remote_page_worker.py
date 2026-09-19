@@ -87,17 +87,34 @@ class RemoteWorkerConfig:
 
     @classmethod
     def from_env(cls) -> "RemoteWorkerConfig":
-        api_base = os.getenv(
-            "REMOTE_WORKER_API_BASE",
-            "http://127.0.0.1:8918/api/saas/internal/render",
-        ).rstrip("/")
+        api_base_env = os.getenv("REMOTE_WORKER_API_BASE", "").strip()
         token = os.getenv("REMOTE_WORKER_TOKEN", "").strip()
+        agent_runtime = None
         if not token:
-            raise RuntimeError("REMOTE_WORKER_TOKEN is required")
+            try:
+                from .remote_worker_agent import load_agent_runtime
+
+                agent_runtime = load_agent_runtime()
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "REMOTE_WORKER_TOKEN is not set and no enrolled macOS Keychain credential is available"
+                ) from exc
+            token = agent_runtime.token
+        api_base = (
+            api_base_env
+            or (agent_runtime.api_base if agent_runtime is not None else "")
+            or "http://127.0.0.1:8918/api/saas/internal/render"
+        ).rstrip("/")
+        env_name = os.getenv("REMOTE_WORKER_NAME", "").strip()
+        default_name = (
+            agent_runtime.name
+            if agent_runtime is not None and agent_runtime.name
+            else socket.gethostname()
+        )
         return cls(
             api_base=api_base,
             token=token,
-            name=os.getenv("REMOTE_WORKER_NAME", socket.gethostname()).strip() or socket.gethostname(),
+            name=env_name or default_name,
             code_version=os.getenv("REMOTE_WORKER_CODE_VERSION", "0.5.0").strip(),
             model_version=os.getenv("REMOTE_WORKER_MODEL_VERSION", "musetalk-mlx").strip(),
             render_contract_version=os.getenv(
