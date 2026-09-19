@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 
 from ..config import settings
+from .auxiliary_task_models import AuxiliaryTaskLease
 from .avatar_matting_engine import PortraitMattingEngine
 from .avatar_matting_models import AvatarMattingJob
 from .database import SessionLocal
@@ -43,6 +44,11 @@ def recover_stale_avatar_matting(*, stale_after_minutes: int = 10) -> int:
             .where(
                 AvatarMattingJob.status == "running",
                 AvatarMattingJob.updated_at < cutoff,
+                ~select(AuxiliaryTaskLease.id).where(
+                    AuxiliaryTaskLease.kind == "avatar_matting",
+                    AuxiliaryTaskLease.job_id == AvatarMattingJob.id,
+                    AuxiliaryTaskLease.expires_at > now,
+                ).exists(),
             )
             .values(
                 status="failed",

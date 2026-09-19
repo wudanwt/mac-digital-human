@@ -6,6 +6,7 @@ from sqlalchemy import text
 from .account_api import router as account_router
 from .admin_api import router as admin_router
 from .assets_api import router as assets_router
+from .auxiliary_worker_api import router as auxiliary_worker_router
 from .auth_api import router as auth_router
 from .auth_api import workspace_router
 from .avatar_matting_api import router as avatar_matting_router
@@ -112,6 +113,7 @@ def capabilities() -> dict:
         "distributed_direct_downloads": saas_settings.distributed_direct_downloads,
         "distributed_direct_uploads": saas_settings.distributed_direct_uploads,
         "distributed_worker_enrollment": True,
+        "distributed_auxiliary_tasks": saas_settings.distributed_render_enabled,
         "render_contract_version": saas_settings.render_contract_version,
         "resident_musetalk_runtime": True,
         "tts_video_prefetch": True,
@@ -154,6 +156,7 @@ for child in (
     system_assets_router,
     worker_status_router,
     distributed_worker_internal_router,
+    auxiliary_worker_router,
     job_detail_router,
     job_router,
     dashboard_router,

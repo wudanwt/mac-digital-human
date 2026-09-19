@@ -11,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 
 from ..config import settings
+from .auxiliary_task_models import AuxiliaryTaskLease
 from .database import SessionLocal
 from .models import Asset, Course, VoiceProfile
 from .services import audit, enforce_storage_limit
@@ -43,6 +44,11 @@ def recover_stale_speech_previews() -> int:
             .where(
                 SpeechPreviewJob.status == "running",
                 SpeechPreviewJob.updated_at < cutoff,
+                ~select(AuxiliaryTaskLease.id).where(
+                    AuxiliaryTaskLease.kind == "speech_preview",
+                    AuxiliaryTaskLease.job_id == SpeechPreviewJob.id,
+                    AuxiliaryTaskLease.expires_at > _now(),
+                ).exists(),
             )
             .values(status="queued", progress=0, stage="recovered", started_at=None, updated_at=_now())
         )

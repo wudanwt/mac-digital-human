@@ -181,6 +181,16 @@ REMOTE_WORKER_RENDER_CONTRACT_VERSION=v1
 bash scripts/saas/start_remote_page_worker_mac.sh
 ```
 
+### 群晖部署时的抠像与语音试听
+
+生产环境只在群晖运行 `api`、`distributed-center`、PostgreSQL、Redis、MinIO；**不要启动 `worker-mock`**。Mac 只启动上面的远程 Worker，不需要连接群晖的 PostgreSQL、Redis，也不需要持有 MinIO 密钥。`SAAS_DISTRIBUTED_RENDER_ENABLED=true` 时，同一个远程 Worker 会通过 HTTPS 领取页面渲染、数字人抠像和课程语音试听三类任务。抠像/试听输入通过带租约的下载接口取得，结果由 Worker 上传给 Center，Center 验证 SHA-256 和大小后入库；租约超时由 Center 重新排队。
+
+部署顺序：先更新群晖 API 和 Center 镜像并执行 Alembic `0012_auxiliary_task_leases` 迁移，再更新并重启 Mac 远程 Worker。旧版 Mac Worker 不会领取新任务；新版 Worker 连接旧版 API 会收到 404 并暂停领取，因此服务端必须先升级。不要把生产数据库或 Redis 端口暴露给 Mac 或公网。
+
+启动后分别发起一次抠像和语音试听，确认 `avatar_matting_jobs` 与 `speech_preview_jobs` 均从 `queued` 到 `succeeded`，对应素材可下载。如果没有任何 Mac/其他计算节点在线，这两类任务仍会排队；群晖容器本身不提供 MuseTalk/MLX 计算能力。
+
+目前辅助任务的结果上传经由 Center 单次 PUT（最大约 2 GB/文件），尚未复用页面视频的可续传上传协议。反向代理需允许相应请求体大小和长时间上传；网络不稳定时租约到期会自动重排，但该文件要重新上传。
+
 ## 5. 数据传输安全边界
 
 Worker 内部使用两个独立 HTTP client：

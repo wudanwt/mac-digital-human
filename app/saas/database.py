@@ -32,6 +32,7 @@ def get_db() -> Generator[Session, None, None]:
 def create_all() -> None:
     # Developer convenience only; production uses Alembic.
     from . import (  # noqa: F401
+        auxiliary_task_models,
         compliance_models,
         distributed_render_models,
         models,

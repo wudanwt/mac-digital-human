@@ -26,6 +26,7 @@ import psutil
 from ..composer import CourseComposer, media_duration
 from ..config import settings as app_settings
 from ..engines import MuseTalkMLXEngine
+from .avatar_matting_engine import PortraitMattingEngine
 from .render_core import PageRenderPlan, RenderWorkspace, execute_page
 from .settings import saas_settings
 from .tts_pipeline import build_course_tts, normalize_external_audio, synthesize_course_audio
@@ -297,6 +298,7 @@ class RemoteApi:
                 "capabilities": [
                     "musetalk",
                     "speech-preview",
+                    "portrait-matting",
                     "transparent-avatar-compose",
                 ],
                 "versions": {"python": platform.python_version()},
@@ -333,6 +335,60 @@ class RemoteApi:
         self._raise(response)
         payload = response.json()
         return payload.get("task") if isinstance(payload, dict) else None
+
+    def claim_auxiliary(self) -> dict[str, Any] | None:
+        response = self.control_client.post(self._url("aux/claim"))
+        self._raise(response)
+        payload = response.json()
+        return payload.get("task") if isinstance(payload, dict) else None
+
+    def renew_auxiliary(self, task: dict[str, Any]) -> str:
+        response = self.control_client.post(
+            self._url(f"aux/{task['id']}/renew"),
+            json={"lease_token": task["lease_token"]},
+        )
+        self._raise(response)
+        return str(response.json()["lease_expires_at"])
+
+    def progress_auxiliary(self, task: dict[str, Any], progress: int, stage: str) -> None:
+        response = self.control_client.post(
+            self._url(f"aux/{task['id']}/progress"),
+            json={"lease_token": task["lease_token"], "progress": progress, "stage": stage[:80]},
+        )
+        self._raise(response)
+
+    def upload_auxiliary(self, task: dict[str, Any], kind: str, source: Path) -> None:
+        with source.open("rb") as fh:
+            def chunks():
+                while chunk := fh.read(self.config.upload_chunk_bytes):
+                    yield chunk
+
+            response = self.control_client.put(
+                self._url(f"aux/{task['id']}/artifacts/{kind}"),
+                headers={
+                    "X-Lease-Token": task["lease_token"],
+                    "X-Content-SHA256": _sha256(source),
+                    "Content-Length": str(source.stat().st_size),
+                },
+                content=chunks(),
+                timeout=None,
+            )
+        self._raise(response)
+
+    def complete_auxiliary(self, task: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = self.control_client.post(
+            self._url(f"aux/{task['id']}/complete"),
+            json={"lease_token": task["lease_token"], "metadata": metadata or {}},
+        )
+        self._raise(response)
+        return response.json()
+
+    def fail_auxiliary(self, task: dict[str, Any], error: str) -> None:
+        response = self.control_client.post(
+            self._url(f"aux/{task['id']}/fail"),
+            json={"lease_token": task["lease_token"], "error": error[:8000]},
+        )
+        self._raise(response)
 
     def renew(self, task: dict[str, Any]) -> str:
         response = self.control_client.post(
@@ -1095,11 +1151,95 @@ class RemotePageWorker:
             finally:
                 shutil.rmtree(attempt_work, ignore_errors=True)
 
+    def process_auxiliary_task(self, task: dict[str, Any]) -> None:
+        self._current_task_id = task["id"]
+        self._last_error = None
+        work = self._attempt_root() / f"aux-{task['id']}"
+        work.mkdir(parents=True, exist_ok=True)
+        # The common downloader sends both headers for proxy transfers. Auxiliary
+        # endpoints need only the lease token but use the same verified download.
+        task["attempt_id"] = task["id"]
+        try:
+            with LeaseKeeper(
+                SimpleNamespace(renew=self.api.renew_auxiliary),
+                task,
+                saas_settings.distributed_renew_seconds,
+            ) as lease:
+                inputs: dict[str, Path] = {}
+                for descriptor in task["assets"]:
+                    suffix = Path(descriptor["name"]).suffix or ".bin"
+                    inputs[descriptor["id"]] = self.api.download(
+                        task, descriptor, work / f"{descriptor['id']}{suffix}"
+                    )
+                lease.checkpoint()
+                payload = task["payload"]
+                if task["kind"] == "avatar_matting":
+                    engine = PortraitMattingEngine(model=payload["model"])
+                    result = engine.process(
+                        inputs[payload["source_asset_id"]],
+                        work,
+                        progress=lambda pct, stage: self.api.progress_auxiliary(task, min(90, pct), stage),
+                    )
+                    metadata = {
+                        "fps": round(result.fps, 6),
+                        "frames": result.frame_count,
+                        "width": result.width,
+                        "height": result.height,
+                        "model": result.model,
+                        "backend": result.backend,
+                        "foreground_recovery": result.foreground_recovery,
+                        "foreground_recovered_ratio": round(result.foreground_recovered_ratio, 4),
+                        "green_screen": result.green_screen,
+                        "elapsed_seconds": round(result.elapsed_seconds, 2),
+                        "temporal_smoothing": engine.temporal_smoothing,
+                        "edge_blur": engine.edge_blur,
+                    }
+                    outputs = {
+                        "alpha": result.alpha_video,
+                        "poster": result.poster_png,
+                        "white": result.white_preview,
+                    }
+                else:
+                    voice = self._voice_proxy(payload["voice"])
+                    runtime = build_course_tts(
+                        voice,
+                        ref_audio=inputs[payload["reference_asset_id"]],
+                        course_settings=payload["course_settings"],
+                        base=work,
+                    )
+                    try:
+                        output = synthesize_course_audio(runtime, payload["text"], work / "preview.wav")
+                    finally:
+                        release = getattr(runtime.provider, "release", None)
+                        if callable(release):
+                            release()
+                    metadata = {}
+                    outputs = {"audio": output}
+                lease.checkpoint()
+                self.api.progress_auxiliary(task, 92, "uploading")
+                for kind, output in outputs.items():
+                    self.api.upload_auxiliary(task, kind, output)
+                    lease.checkpoint()
+                self.api.complete_auxiliary(task, metadata)
+        except LeaseLost:
+            log.warning("Auxiliary lease lost for task %s", task["id"])
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            log.exception("Remote auxiliary task failed task=%s", task["id"])
+            try:
+                self.api.fail_auxiliary(task, str(exc))
+            except Exception as report_exc:  # noqa: BLE001
+                log.warning("Unable to report auxiliary task failure: %s", report_exc)
+        finally:
+            self._current_task_id = None
+            shutil.rmtree(work, ignore_errors=True)
+
     def run_forever(self) -> None:
         self.config.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cleanup_stale_attempt_workspaces()
         self.register()
         heartbeat = self.start_heartbeat()
+        prefer_auxiliary = False
         try:
             while not self._stop.is_set():
                 if not self._disk_ready():
@@ -1114,16 +1254,23 @@ class RemotePageWorker:
                     continue
                 self._last_error = None
                 try:
-                    task = self.api.claim()
+                    auxiliary = self.api.claim_auxiliary() if prefer_auxiliary else None
+                    task = None if auxiliary else self.api.claim()
+                    if task is None and auxiliary is None and not prefer_auxiliary:
+                        auxiliary = self.api.claim_auxiliary()
                 except Exception as exc:  # noqa: BLE001
                     self._last_error = str(exc)
                     log.warning("Task claim failed: %s", exc)
                     time.sleep(3)
                     continue
-                if task is None:
+                if task is None and auxiliary is None:
                     time.sleep(1)
                     continue
-                self.process_task(task)
+                prefer_auxiliary = not prefer_auxiliary
+                if auxiliary is not None:
+                    self.process_auxiliary_task(auxiliary)
+                else:
+                    self.process_task(task)
         finally:
             self._stop.set()
             heartbeat.join(timeout=2)
