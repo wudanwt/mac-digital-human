@@ -887,6 +887,10 @@ def commit_direct_artifact_upload(
     if remote_size is None:
         raise HTTPException(status_code=409, detail="Direct upload object is not available")
     if remote_size != body.size_bytes:
+        try:
+            object_store.delete(expected_key)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Unable to remove invalid direct upload %s: %s", expected_key, exc)
         raise HTTPException(
             status_code=422,
             detail=f"Direct upload size mismatch: object={remote_size} expected={body.size_bytes}",
@@ -1023,7 +1027,15 @@ def complete_task(
         raise HTTPException(status_code=422, detail=f"Required media metadata missing: {', '.join(missing_media)}")
     metadata = {"media": body.media, "metrics": body.metrics}
     for artifact in artifacts:
-        artifact.metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        existing_metadata = _json(artifact.metadata_json, {})
+        artifact.metadata_json = json.dumps(
+            {
+                **(existing_metadata if isinstance(existing_metadata, dict) else {}),
+                **metadata,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     try:
         finalize_queued = complete_page_task(
             db,
