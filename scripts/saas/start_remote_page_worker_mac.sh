@@ -18,7 +18,7 @@ if [[ -f .env.remote-worker ]]; then
 fi
 
 : "${REMOTE_WORKER_API_BASE:?Set REMOTE_WORKER_API_BASE, e.g. https://worker-api.example.com/api/saas/internal/render}"
-: "${REMOTE_WORKER_TOKEN:?Set REMOTE_WORKER_TOKEN to the one-time credential returned by the center admin API}"
+: "${REMOTE_WORKER_TOKEN:?Set REMOTE_WORKER_TOKEN to the worker credential printed once when the node is provisioned}"
 
 export SAAS_TTS_PREFETCH=0
 export REMOTE_WORKER_NAME="${REMOTE_WORKER_NAME:-$(scutil --get ComputerName 2>/dev/null || hostname)}"
