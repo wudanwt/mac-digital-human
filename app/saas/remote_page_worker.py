@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+import ipaddress
 import json
 import logging
 import os
@@ -151,6 +152,19 @@ class LeaseLost(RuntimeError):
     pass
 
 
+def _is_private_or_local_host(hostname: str | None) -> bool:
+    host = (hostname or "").strip().lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -203,6 +217,17 @@ class RemoteApi:
         parsed = urlsplit(config.api_base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("REMOTE_WORKER_API_BASE must be an absolute http(s) URL")
+        allow_insecure = os.getenv("REMOTE_WORKER_ALLOW_INSECURE_HTTP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if parsed.scheme == "http" and not _is_private_or_local_host(parsed.hostname) and not allow_insecure:
+            raise RuntimeError(
+                "public remote Center endpoints must use HTTPS; "
+                "set REMOTE_WORKER_ALLOW_INSECURE_HTTP=1 only for a trusted private network"
+            )
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         # Control-plane credentials must never be sent to object storage.
         # Keep authenticated Center traffic and unauthenticated signed-URL
