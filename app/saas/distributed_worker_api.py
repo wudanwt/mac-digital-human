@@ -583,7 +583,7 @@ def claim_task(
 ) -> dict[str, Any]:
     if not saas_settings.distributed_render_enabled:
         return {"task": None, "reason": "distributed rendering disabled"}
-    if node.status in {"incompatible", "revoked", "disk_low"}:
+    if node.status not in {"online", "busy"} or not node.accepting_tasks:
         raise HTTPException(status_code=409, detail=f"Worker is not eligible: {node.status}")
     try:
         lease = claim_page_task(db, node_id=node.id)
