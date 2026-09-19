@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,25 @@ def _config(tmp_path: Path) -> RemoteWorkerConfig:
         upload_chunk_bytes=8 * 1024**2,
         request_timeout_seconds=30.0,
     )
+
+
+def test_remote_api_rejects_public_plain_http(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("REMOTE_WORKER_ALLOW_INSECURE_HTTP", raising=False)
+    config = replace(
+        _config(tmp_path),
+        api_base="http://worker-api.example.com/api/saas/internal/render",
+    )
+    with pytest.raises(RuntimeError, match="must use HTTPS"):
+        RemoteApi(config)
+
+
+def test_remote_api_accepts_public_https(tmp_path: Path) -> None:
+    config = replace(
+        _config(tmp_path),
+        api_base="https://worker-api.example.com/api/saas/internal/render",
+    )
+    api = RemoteApi(config)
+    api.close()
 
 
 def test_remote_api_resolves_task_scoped_relative_urls(tmp_path: Path) -> None:
