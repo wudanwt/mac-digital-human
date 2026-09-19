@@ -402,10 +402,26 @@ class RemoteApi:
             direct_url = str(descriptor.get("url") or "")
             if not direct_url.startswith(("http://", "https://")):
                 raise RuntimeError("direct download URL must be absolute")
+            direct_parts = urlsplit(direct_url)
+            fallback = str(descriptor.get("fallback_url") or "")
+            if direct_parts.scheme == "http" and not _is_private_or_local_host(direct_parts.hostname):
+                if not fallback:
+                    raise RuntimeError("public direct download URLs must use HTTPS")
+                log.warning(
+                    "Ignoring insecure public direct download URL for %s; using Center proxy",
+                    descriptor.get("id"),
+                )
+                return [
+                    (
+                        "proxy",
+                        self.control_client,
+                        self._resource_url(fallback),
+                        self._lease_headers(task),
+                    )
+                ]
             candidates: list[tuple[str, httpx.Client, str, dict[str, str]]] = [
                 ("direct", self.transfer_client, direct_url, {}),
             ]
-            fallback = str(descriptor.get("fallback_url") or "")
             if fallback:
                 candidates.append(
                     (
