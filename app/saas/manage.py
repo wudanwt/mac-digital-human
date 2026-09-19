@@ -122,6 +122,7 @@ def create_worker_enrollment(name: str, slots: int) -> None:
             used_at=None,
         )
         db.add(node)
+        db.flush()
         db.add(enrollment)
         db.commit()
     print(f"Pending Worker: {clean_name} / id={node_id} / slots={slots}")
