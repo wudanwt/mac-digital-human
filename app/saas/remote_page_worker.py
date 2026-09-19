@@ -501,6 +501,102 @@ class RemoteApi:
         os.utime(destination, None)
         return destination
 
+    def _direct_upload_url_allowed(self, value: str) -> bool:
+        parsed = urlsplit(value)
+        if parsed.scheme == "https":
+            return bool(parsed.netloc)
+        if parsed.scheme == "http" and parsed.netloc:
+            return _is_private_or_local_host(parsed.hostname)
+        return False
+
+    def _try_direct_upload(
+        self,
+        task: dict[str, Any],
+        *,
+        kind: str,
+        source: Path,
+        size_bytes: int,
+        sha256: str,
+        headers: dict[str, str],
+    ) -> dict[str, Any] | None:
+        session_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/direct-upload")
+        response = self.control_client.post(
+            session_url,
+            headers=headers,
+            json={"size_bytes": size_bytes, "sha256": sha256},
+        )
+        # A V2 Worker can still talk to an older V1 Center when compatibility
+        # gates are intentionally relaxed.
+        if response.status_code in {404, 405}:
+            return None
+        self._raise(response)
+        session = response.json()
+        if session.get("completed") or session.get("mode") == "completed":
+            if session.get("sha256") and session["sha256"] != sha256:
+                raise RuntimeError(f"center already has a different {kind} artifact")
+            return session
+        if session.get("mode") != "direct":
+            return None
+
+        upload_url = str(session.get("upload_url") or "")
+        object_key = str(session.get("object_key") or "")
+        if not self._direct_upload_url_allowed(upload_url):
+            log.warning("Direct upload URL is not safe/reachable for %s; using Center proxy", kind)
+            return None
+        if not object_key:
+            raise RuntimeError("direct upload session is missing object_key")
+
+        try:
+            with source.open("rb") as fh:
+                def chunks():
+                    while True:
+                        chunk = fh.read(1024 * 1024)
+                        if not chunk:
+                            return
+                        yield chunk
+
+                direct_response = self.transfer_client.put(
+                    upload_url,
+                    headers={"Content-Length": str(size_bytes)},
+                    content=chunks(),
+                )
+            if not direct_response.is_success:
+                log.warning(
+                    "Direct object-store upload failed for %s with HTTP %s; using Center proxy",
+                    kind,
+                    direct_response.status_code,
+                )
+                return None
+        except httpx.HTTPError as exc:
+            log.warning("Direct object-store upload failed for %s; using Center proxy: %s", kind, exc)
+            return None
+
+        commit_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/direct-commit")
+        payload = {
+            "object_key": object_key,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+        }
+        for retry in range(3):
+            commit = self.control_client.post(commit_url, headers=headers, json=payload)
+            if commit.is_success:
+                return commit.json()
+            # A just-written object can briefly be unavailable through some
+            # S3-compatible gateways. Retry only that specific verification
+            # failure; lease/auth/ownership conflicts must surface immediately.
+            detail = commit.text
+            if commit.status_code in {409, 503} and (
+                "Direct upload object is not available" in detail
+                or "Unable to verify direct upload" in detail
+            ):
+                if retry < 2:
+                    time.sleep(0.5 * (2**retry))
+                    continue
+                log.warning("Direct upload commit could not verify %s; using Center proxy", kind)
+                return None
+            self._raise(commit)
+        return None
+
     def upload(
         self,
         task: dict[str, Any],
@@ -519,8 +615,19 @@ class RemoteApi:
                 raise RuntimeError(f"center already has a different {kind} artifact")
             return status
 
-        offset = int(status.get("received_bytes") or 0)
         total = source.stat().st_size
+        direct = self._try_direct_upload(
+            task,
+            kind=kind,
+            source=source,
+            size_bytes=total,
+            sha256=digest,
+            headers=headers,
+        )
+        if direct is not None:
+            return direct
+
+        offset = int(status.get("received_bytes") or 0)
         if offset > total:
             raise RuntimeError(f"center upload offset exceeds local file for {kind}")
         upload_url = self._url(f"tasks/{task['id']}/artifacts/{kind}")
