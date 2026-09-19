@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from io import BytesIO
@@ -12,8 +13,8 @@ from sqlalchemy import select
 
 from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
-from app.saas.distributed_render_models import RenderArtifact
-from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
+from app.saas.distributed_render_models import RenderArtifact, WorkerEnrollment, WorkerNode
+from app.saas.distributed_scheduler import hash_secret, initialize_parent_graph, publish_prepared_pages
 from app.saas.distributed_worker_api import _sha256_path
 from app.saas.models import User
 from app.saas.security import decode_access_token
@@ -644,3 +645,118 @@ def test_direct_artifact_upload_falls_back_when_backend_cannot_sign(monkeypatch)
     finally:
         object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
         object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
+
+
+def test_worker_enrollment_is_single_use_and_issues_real_credential() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+
+        created = client.post(
+            "/api/saas/distributed/workers/enrollments",
+            headers=_headers(token),
+            json={"name": "remote-enroll-mini", "slots_total": 1},
+        )
+        assert created.status_code == 201, created.text
+        payload = created.json()
+        code = payload["enrollment_code"]
+        node_id = payload["worker"]["id"]
+        assert code.startswith("enr_")
+        assert payload["worker"]["status"] == "pending"
+        assert payload["worker"]["accepting_tasks"] is False
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            node = db.get(WorkerNode, node_id)
+            assert enrollment is not None
+            assert node is not None
+            assert enrollment.token_hash == hash_secret(code)
+            assert enrollment.token_hash != code
+            assert enrollment.used_at is None
+            pending_hash = node.credential_hash
+
+        enrolled = client.post(
+            "/api/saas/internal/render/enroll",
+            json={
+                "enrollment_code": code,
+                "name": "remote-enroll-mini",
+                "host": "remote-enroll-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+            },
+        )
+        assert enrolled.status_code == 200, enrolled.text
+        worker_token = enrolled.json()["token"]
+        assert worker_token.startswith(f"wrk_{node_id}_")
+        assert enrolled.json()["worker"]["status"] == "offline"
+        assert enrolled.json()["worker"]["accepting_tasks"] is True
+
+        replay = client.post(
+            "/api/saas/internal/render/enroll",
+            json={"enrollment_code": code},
+        )
+        assert replay.status_code == 401
+
+        register = client.post(
+            "/api/saas/internal/render/register",
+            headers={"Authorization": f"Bearer {worker_token}"},
+            json={
+                "name": "remote-enroll-mini",
+                "host": "remote-enroll-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+                "slots_total": 1,
+                "capabilities": ["musetalk"],
+                "versions": {"agent": "v3"},
+                "code_version": "0.5.0",
+                "model_version": "musetalk-mlx",
+                "render_contract_version": saas_settings.render_contract_version,
+            },
+        )
+        assert register.status_code == 200, register.text
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            node = db.get(WorkerNode, node_id)
+            assert enrollment is not None and enrollment.used_at is not None
+            assert node is not None
+            assert node.credential_hash == hash_secret(worker_token)
+            assert node.credential_hash != pending_hash
+
+
+def test_expired_worker_enrollment_is_rejected() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+        created = client.post(
+            "/api/saas/distributed/workers/enrollments",
+            headers=_headers(token),
+            json={"name": "expired-enroll-mini", "slots_total": 1},
+        )
+        assert created.status_code == 201, created.text
+        code = created.json()["enrollment_code"]
+        node_id = created.json()["worker"]["id"]
+
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            assert enrollment is not None
+            enrollment.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+
+        expired = client.post(
+            "/api/saas/internal/render/enroll",
+            json={"enrollment_code": code},
+        )
+        assert expired.status_code == 401
+        with SessionLocal() as db:
+            enrollment = db.scalar(
+                select(WorkerEnrollment).where(WorkerEnrollment.node_id == node_id)
+            )
+            assert enrollment is not None
+            assert enrollment.used_at is None
