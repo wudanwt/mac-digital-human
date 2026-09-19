@@ -66,6 +66,10 @@ class SaaSSettings:
     distributed_min_disk_free_gb: int = int(os.getenv("SAAS_DISTRIBUTED_MIN_DISK_FREE_GB", "10"))
     distributed_transfer_slots: int = int(os.getenv("SAAS_DISTRIBUTED_TRANSFER_SLOTS", "2"))
     distributed_upload_chunk_mb: int = int(os.getenv("SAAS_DISTRIBUTED_UPLOAD_CHUNK_MB", "8"))
+    # When enabled, task manifests prefer short-lived object-store URLs for
+    # large immutable inputs. Proxy URLs remain available as a fallback so LAN
+    # and local-storage deployments keep the existing behavior.
+    distributed_direct_downloads: bool = _env_bool("SAAS_DISTRIBUTED_DIRECT_DOWNLOADS", False)
 
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
