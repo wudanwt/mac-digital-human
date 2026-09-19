@@ -113,6 +113,11 @@ def operations_overview(
     del principal
     now = datetime.now(timezone.utc)
     seven_days = now + timedelta(days=7)
+    current_period = or_(
+        Subscription.plan_code == "free",
+        Subscription.period_ends_at.is_(None),
+        Subscription.period_ends_at > now,
+    )
     paid_revenue = float(
         db.scalar(
             select(func.coalesce(func.sum(PaymentOrder.amount_cny), 0.0)).where(PaymentOrder.status == "paid")
@@ -131,12 +136,18 @@ def operations_overview(
         "users": int(db.scalar(select(func.count()).select_from(User)) or 0),
         "customers": int(db.scalar(select(func.count()).select_from(Tenant)) or 0),
         "active_subscriptions": int(
-            db.scalar(select(func.count()).select_from(Subscription).where(Subscription.status == "active")) or 0
+            db.scalar(
+                select(func.count()).select_from(Subscription).where(
+                    Subscription.status == "active", current_period
+                )
+            ) or 0
         ),
         "paid_customers": int(
             db.scalar(
                 select(func.count(func.distinct(Subscription.tenant_id))).where(
-                    Subscription.status == "active", Subscription.plan_code != "free"
+                    Subscription.status == "active",
+                    Subscription.plan_code != "free",
+                    Subscription.period_ends_at > now,
                 )
             )
             or 0
@@ -437,6 +448,8 @@ def adjust_customer_credits(
     if db.get(Tenant, tenant_id) is None:
         raise HTTPException(status_code=404, detail="Customer workspace not found")
     current = active_subscription(db, tenant_id)
+    if current.status == "expired":
+        raise HTTPException(status_code=422, detail="Activate a plan before adjusting an expired subscription")
     delta = body.minutes * 60
     if current.remaining_seconds + delta < 0:
         raise HTTPException(status_code=422, detail="Adjustment would make remaining credits negative")

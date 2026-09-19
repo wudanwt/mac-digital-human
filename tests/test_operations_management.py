@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.saas.bootstrap import seed_plans
 from app.saas.database import SessionLocal
-from app.saas.models import User
+from app.saas.models import Plan, Subscription, User
 from app.saas_main import app
 
 
@@ -166,3 +168,62 @@ def test_operations_ui_is_mounted() -> None:
         assert script.status_code == 200
         assert "SaaS 运营管理中心" in script.text
         assert "订阅周期历史" in script.text
+
+
+def test_builtin_plan_edits_survive_startup_seeding() -> None:
+    with TestClient(app) as client:
+        admin = _register(client, "ops-plan-admin")
+        _promote(admin["_email"])
+        headers = _headers(admin["access_token"])
+        with SessionLocal() as db:
+            plan = db.get(Plan, "pro")
+            assert plan is not None
+            original_price = plan.price_cny
+        try:
+            updated = client.patch(
+                "/api/saas/admin/ops/plans/pro",
+                headers=headers,
+                json={"price_cny": original_price + 1},
+            )
+            assert updated.status_code == 200, updated.text
+            seed_plans()
+            with SessionLocal() as db:
+                assert db.get(Plan, "pro").price_cny == original_price + 1
+        finally:
+            with SessionLocal() as db:
+                db.get(Plan, "pro").price_cny = original_price
+                db.commit()
+
+
+def test_expired_subscription_is_not_counted_or_credited() -> None:
+    with TestClient(app) as client:
+        admin = _register(client, "ops-expired-admin")
+        customer = _register(client, "ops-expired-customer")
+        _promote(admin["_email"])
+        headers = _headers(admin["access_token"])
+        tenant_id = customer["workspace"]["id"]
+        activated = client.post(
+            f"/api/saas/admin/ops/customers/{tenant_id}/activate",
+            headers=headers,
+            json={"plan_code": "pro", "months": 1},
+        )
+        assert activated.status_code == 201, activated.text
+        before = client.get("/api/saas/admin/ops/overview", headers=headers).json()
+        with SessionLocal() as db:
+            sub = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
+            assert sub is not None
+            sub.period_ends_at = datetime.now(timezone.utc) - timedelta(days=1)
+            db.commit()
+
+        after = client.get("/api/saas/admin/ops/overview", headers=headers).json()
+        assert after["paid_customers"] == before["paid_customers"] - 1
+        assert after["active_subscriptions"] == before["active_subscriptions"] - 1
+        credit = client.post(
+            f"/api/saas/admin/ops/customers/{tenant_id}/credits",
+            headers=headers,
+            json={"minutes": 30, "reason": "售后补偿"},
+        )
+        assert credit.status_code == 422, credit.text
+        detail = client.get(f"/api/saas/admin/ops/customers/{tenant_id}", headers=headers).json()
+        assert detail["subscription"]["status"] == "expired"
+        assert detail["subscription"]["remaining_minutes"] == 0

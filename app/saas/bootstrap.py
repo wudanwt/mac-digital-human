@@ -29,9 +29,6 @@ def seed_plans() -> None:
             plan = db.get(Plan, item["code"])
             if plan is None:
                 db.add(Plan(**item))
-            else:
-                for key, value in item.items():
-                    setattr(plan, key, value)
         db.commit()
 
 
