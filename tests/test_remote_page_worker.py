@@ -164,6 +164,165 @@ def test_direct_download_falls_back_to_authenticated_center_proxy(tmp_path: Path
         api.close()
 
 
+
+
+def test_direct_upload_never_sends_worker_credentials_to_object_store(tmp_path: Path) -> None:
+    api = RemoteApi(_config(tmp_path))
+    source = tmp_path / "page.mp4"
+    payload = b"direct-upload-payload"
+    source.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    transfer_headers: dict[str, str] = {}
+    transfer_body = b""
+    commit_headers: dict[str, str] = {}
+
+    def control_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal commit_headers
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/artifacts/page_video/upload"):
+            return httpx.Response(200, json={"completed": False, "received_bytes": 0}, request=request)
+        if request.method == "POST" and path.endswith("/artifacts/page_video/direct-upload"):
+            return httpx.Response(
+                200,
+                json={
+                    "mode": "direct",
+                    "completed": False,
+                    "upload_url": "https://objects.example.test/upload?signature=put",
+                    "object_key": "tenant/job/attempts/attempt-1/page_video.mp4",
+                    "expires_in": 3600,
+                },
+                request=request,
+            )
+        if request.method == "POST" and path.endswith("/artifacts/page_video/direct-commit"):
+            commit_headers = {key.lower(): value for key, value in request.headers.items()}
+            body = request.read()
+            assert b"tenant/job/attempts/attempt-1/page_video.mp4" in body
+            return httpx.Response(
+                200,
+                json={
+                    "completed": True,
+                    "artifact_id": "artifact-1",
+                    "received_bytes": len(payload),
+                    "sha256": digest,
+                },
+                request=request,
+            )
+        raise AssertionError(f"unexpected control request: {request.method} {request.url}")
+
+    def transfer_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal transfer_body
+        transfer_headers.update({key.lower(): value for key, value in request.headers.items()})
+        transfer_body = request.read()
+        return httpx.Response(200, request=request)
+
+    api.control_client.close()
+    api.transfer_client.close()
+    api.control_client = httpx.Client(
+        base_url=api.origin,
+        headers={"Authorization": "Bearer test-worker-token"},
+        transport=httpx.MockTransport(control_handler),
+        trust_env=False,
+    )
+    api.transfer_client = httpx.Client(
+        transport=httpx.MockTransport(transfer_handler),
+        trust_env=False,
+    )
+    try:
+        result = api.upload(
+            {"id": "task-1", "attempt_id": "attempt-1", "lease_token": "lease-secret"},
+            kind="page_video",
+            source=source,
+        )
+        assert result["completed"] is True
+        assert transfer_body == payload
+        assert transfer_headers["content-length"] == str(len(payload))
+        assert "authorization" not in transfer_headers
+        assert "x-attempt-id" not in transfer_headers
+        assert "x-lease-token" not in transfer_headers
+        assert commit_headers["authorization"] == "Bearer test-worker-token"
+        assert commit_headers["x-attempt-id"] == "attempt-1"
+        assert commit_headers["x-lease-token"] == "lease-secret"
+    finally:
+        api.close()
+
+
+def test_failed_direct_upload_falls_back_to_center_chunk_upload(tmp_path: Path) -> None:
+    api = RemoteApi(_config(tmp_path))
+    source = tmp_path / "page.wav"
+    payload = b"proxy-after-direct-failure"
+    source.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    direct_calls = 0
+    proxy_headers: dict[str, str] = {}
+    proxy_body = b""
+
+    def control_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal proxy_body
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/artifacts/page_audio/upload"):
+            return httpx.Response(200, json={"completed": False, "received_bytes": 0}, request=request)
+        if request.method == "POST" and path.endswith("/artifacts/page_audio/direct-upload"):
+            return httpx.Response(
+                200,
+                json={
+                    "mode": "direct",
+                    "completed": False,
+                    "upload_url": "https://objects.example.test/upload?signature=put",
+                    "object_key": "tenant/job/attempts/attempt-1/page_audio.wav",
+                },
+                request=request,
+            )
+        if request.method == "PUT" and path.endswith("/artifacts/page_audio"):
+            proxy_headers.update({key.lower(): value for key, value in request.headers.items()})
+            proxy_body = request.read()
+            return httpx.Response(
+                200,
+                json={
+                    "completed": True,
+                    "artifact_id": "artifact-proxy",
+                    "received_bytes": len(payload),
+                    "sha256": digest,
+                },
+                request=request,
+            )
+        raise AssertionError(f"unexpected control request: {request.method} {request.url}")
+
+    def transfer_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal direct_calls
+        direct_calls += 1
+        request.read()
+        return httpx.Response(403, request=request)
+
+    api.control_client.close()
+    api.transfer_client.close()
+    api.control_client = httpx.Client(
+        base_url=api.origin,
+        headers={"Authorization": "Bearer test-worker-token"},
+        transport=httpx.MockTransport(control_handler),
+        trust_env=False,
+    )
+    api.transfer_client = httpx.Client(
+        transport=httpx.MockTransport(transfer_handler),
+        trust_env=False,
+    )
+    try:
+        result = api.upload(
+            {"id": "task-1", "attempt_id": "attempt-1", "lease_token": "lease-secret"},
+            kind="page_audio",
+            source=source,
+        )
+        assert result["completed"] is True
+        assert direct_calls == 1
+        assert proxy_body == payload
+        assert proxy_headers["authorization"] == "Bearer test-worker-token"
+        assert proxy_headers["x-attempt-id"] == "attempt-1"
+        assert proxy_headers["x-lease-token"] == "lease-secret"
+        assert proxy_headers["x-content-sha256"] == digest
+        assert proxy_headers["content-range"] == f"bytes 0-{len(payload) - 1}/{len(payload)}"
+    finally:
+        api.close()
+
+
 def test_remote_worker_rejects_duplicate_process_for_same_cache(tmp_path: Path) -> None:
     lock_path = worker_lock_path(tmp_path)
     assert lock_path.parent == tmp_path.resolve().parent / ".remote-worker-locks"
