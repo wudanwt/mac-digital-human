@@ -15,6 +15,8 @@ class ObjectStore(Protocol):
     def materialize(self, key: str, destination: Path) -> Path: ...
     def delete(self, key: str) -> None: ...
     def signed_get_url(self, key: str) -> str | None: ...
+    def signed_put_url(self, key: str) -> str | None: ...
+    def object_size(self, key: str) -> int | None: ...
     def local_path(self, key: str) -> Path | None: ...
     def healthcheck(self) -> None: ...
 
@@ -86,6 +88,14 @@ class LocalObjectStore:
         del key
         return None
 
+    def signed_put_url(self, key: str) -> str | None:
+        del key
+        return None
+
+    def object_size(self, key: str) -> int | None:
+        path = self._target(key)
+        return path.stat().st_size if path.exists() else None
+
     def local_path(self, key: str) -> Path | None:
         path = self._target(key)
         return path if path.exists() else None
@@ -139,6 +149,27 @@ class S3ObjectStore:
             ExpiresIn=saas_settings.storage_signed_url_seconds,
         )
 
+    def signed_put_url(self, key: str) -> str | None:
+        return self.client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=saas_settings.storage_signed_url_seconds,
+        )
+
+    def object_size(self, key: str) -> int | None:
+        try:
+            response = self.client.head_object(Bucket=self.bucket, Key=key)
+        except Exception as exc:  # boto3/compatible providers expose different exception classes
+            response = getattr(exc, "response", {}) or {}
+            error = response.get("Error", {}) if isinstance(response, dict) else {}
+            metadata = response.get("ResponseMetadata", {}) if isinstance(response, dict) else {}
+            code = str(error.get("Code") or "")
+            status = int(metadata.get("HTTPStatusCode") or 0)
+            if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        return int(response.get("ContentLength") or 0)
+
     def local_path(self, key: str) -> Path | None:
         del key
         return None
@@ -185,6 +216,18 @@ class OSSObjectStore:
 
     def signed_get_url(self, key: str) -> str | None:
         return self.bucket.sign_url("GET", key, saas_settings.storage_signed_url_seconds)
+
+    def signed_put_url(self, key: str) -> str | None:
+        return self.bucket.sign_url("PUT", key, saas_settings.storage_signed_url_seconds)
+
+    def object_size(self, key: str) -> int | None:
+        try:
+            result = self.bucket.head_object(key)
+        except Exception as exc:
+            if int(getattr(exc, "status", 0) or 0) == 404:
+                return None
+            raise
+        return int(getattr(result, "content_length", 0) or 0)
 
     def local_path(self, key: str) -> Path | None:
         del key
@@ -235,6 +278,28 @@ class COSObjectStore:
             Key=key,
             Expired=saas_settings.storage_signed_url_seconds,
         )
+
+    def signed_put_url(self, key: str) -> str | None:
+        return self.client.get_presigned_url(
+            Method="PUT",
+            Bucket=self.bucket,
+            Key=key,
+            Expired=saas_settings.storage_signed_url_seconds,
+        )
+
+    def object_size(self, key: str) -> int | None:
+        try:
+            response = self.client.head_object(Bucket=self.bucket, Key=key)
+        except Exception as exc:
+            status = int(getattr(exc, "status_code", 0) or 0)
+            if not status:
+                response = getattr(exc, "response", {}) or {}
+                metadata = response.get("ResponseMetadata", {}) if isinstance(response, dict) else {}
+                status = int(metadata.get("HTTPStatusCode") or 0)
+            if status == 404:
+                return None
+            raise
+        return int(response.get("Content-Length") or response.get("ContentLength") or 0)
 
     def local_path(self, key: str) -> Path | None:
         del key
