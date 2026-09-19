@@ -204,17 +204,25 @@ class RemoteApi:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("REMOTE_WORKER_API_BASE must be an absolute http(s) URL")
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
-        # A base URL is intentional: task manifests use same-origin relative
-        # download URLs so the center never has to expose its object-store URL.
-        self.client = httpx.Client(
+        # Control-plane credentials must never be sent to object storage.
+        # Keep authenticated Center traffic and unauthenticated signed-URL
+        # transfers on separate clients.
+        timeout = httpx.Timeout(config.request_timeout_seconds, connect=15.0)
+        self.control_client = httpx.Client(
             base_url=self.origin,
             headers={"Authorization": f"Bearer {config.token}"},
-            timeout=httpx.Timeout(config.request_timeout_seconds, connect=15.0),
+            timeout=timeout,
             trust_env=False,
+        )
+        self.transfer_client = httpx.Client(
+            timeout=timeout,
+            trust_env=False,
+            follow_redirects=True,
         )
 
     def close(self) -> None:
-        self.client.close()
+        self.control_client.close()
+        self.transfer_client.close()
 
     def _url(self, suffix: str) -> str:
         return f"{self.config.api_base}/{suffix.lstrip('/')}"
@@ -236,7 +244,7 @@ class RemoteApi:
         raise RuntimeError(f"center API {response.status_code}: {detail}")
 
     def register(self) -> dict[str, Any]:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url("register"),
             json={
                 "name": self.config.name,
@@ -266,7 +274,7 @@ class RemoteApi:
     ) -> dict[str, Any]:
         usage = shutil.disk_usage(self.config.cache_dir)
         memory = psutil.virtual_memory()
-        response = self.client.post(
+        response = self.control_client.post(
             self._url("heartbeat"),
             json={
                 "current_task_id": current_task_id,
@@ -279,13 +287,13 @@ class RemoteApi:
         return response.json()
 
     def claim(self) -> dict[str, Any] | None:
-        response = self.client.post(self._url("tasks/claim"))
+        response = self.control_client.post(self._url("tasks/claim"))
         self._raise(response)
         payload = response.json()
         return payload.get("task") if isinstance(payload, dict) else None
 
     def renew(self, task: dict[str, Any]) -> str:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/renew"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -302,7 +310,7 @@ class RemoteApi:
         stage: str,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/progress"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -321,7 +329,7 @@ class RemoteApi:
         retryable: bool,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/fail"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -340,7 +348,7 @@ class RemoteApi:
         metrics: dict[str, Any],
         media: dict[str, Any],
     ) -> dict[str, Any]:
-        response = self.client.post(
+        response = self.control_client.post(
             self._url(f"tasks/{task['id']}/complete"),
             json={
                 "attempt_id": task["attempt_id"],
@@ -359,6 +367,39 @@ class RemoteApi:
             "X-Lease-Token": task["lease_token"],
         }
 
+    def _download_candidates(
+        self,
+        task: dict[str, Any],
+        descriptor: dict[str, Any],
+    ) -> list[tuple[str, httpx.Client, str, dict[str, str]]]:
+        mode = str(descriptor.get("transfer_mode") or "proxy").lower()
+        if mode == "direct":
+            direct_url = str(descriptor.get("url") or "")
+            if not direct_url.startswith(("http://", "https://")):
+                raise RuntimeError("direct download URL must be absolute")
+            candidates: list[tuple[str, httpx.Client, str, dict[str, str]]] = [
+                ("direct", self.transfer_client, direct_url, {}),
+            ]
+            fallback = str(descriptor.get("fallback_url") or "")
+            if fallback:
+                candidates.append(
+                    (
+                        "proxy",
+                        self.control_client,
+                        self._resource_url(fallback),
+                        self._lease_headers(task),
+                    )
+                )
+            return candidates
+        return [
+            (
+                "proxy",
+                self.control_client,
+                self._resource_url(str(descriptor["url"])),
+                self._lease_headers(task),
+            )
+        ]
+
     def download(
         self,
         task: dict[str, Any],
@@ -367,21 +408,45 @@ class RemoteApi:
     ) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
         part = destination.with_suffix(destination.suffix + ".part")
-        existing = part.stat().st_size if part.exists() else 0
-        headers = self._lease_headers(task)
-        if existing:
-            headers["Range"] = f"bytes={existing}-"
-        resource_url = self._resource_url(str(descriptor["url"]))
-        with self.client.stream("GET", resource_url, headers=headers) as response:
-            if existing and response.status_code == 200:
-                part.unlink(missing_ok=True)
-                existing = 0
-            if response.status_code not in {200, 206}:
-                self._raise(response)
-            mode = "ab" if existing and response.status_code == 206 else "wb"
-            with part.open(mode) as fh:
-                for chunk in response.iter_bytes(1024 * 1024):
-                    fh.write(chunk)
+        candidates = self._download_candidates(task, descriptor)
+        last_error: Exception | None = None
+        downloaded = False
+
+        for mode_name, client, resource_url, base_headers in candidates:
+            existing = part.stat().st_size if part.exists() else 0
+            headers = dict(base_headers)
+            if existing:
+                headers["Range"] = f"bytes={existing}-"
+            try:
+                with client.stream("GET", resource_url, headers=headers) as response:
+                    if response.status_code not in {200, 206}:
+                        if mode_name == "direct":
+                            raise RuntimeError(f"direct download returned HTTP {response.status_code}")
+                        self._raise(response)
+                    if existing and response.status_code == 200:
+                        part.unlink(missing_ok=True)
+                        existing = 0
+                    file_mode = "ab" if existing and response.status_code == 206 else "wb"
+                    with part.open(file_mode) as fh:
+                        for chunk in response.iter_bytes(1024 * 1024):
+                            fh.write(chunk)
+                downloaded = True
+                break
+            except (httpx.HTTPError, RuntimeError) as exc:
+                last_error = exc
+                if mode_name == "direct" and len(candidates) > 1:
+                    log.warning(
+                        "Direct object-store download failed for %s; falling back to Center proxy: %s",
+                        descriptor.get("id"),
+                        exc,
+                    )
+                    continue
+                raise
+
+        if not downloaded:
+            raise RuntimeError(
+                f"unable to download {descriptor.get('id')}: {last_error or 'no usable transfer route'}"
+            )
 
         expected_size = int(descriptor.get("size_bytes") or 0)
         if expected_size and part.stat().st_size != expected_size:
@@ -405,7 +470,7 @@ class RemoteApi:
         digest = _sha256(source)
         headers = self._lease_headers(task)
         status_url = self._url(f"tasks/{task['id']}/artifacts/{kind}/upload")
-        response = self.client.get(status_url, headers=headers)
+        response = self.control_client.get(status_url, headers=headers)
         self._raise(response)
         status = response.json()
         if status.get("completed"):
@@ -432,7 +497,7 @@ class RemoteApi:
                 }
                 if end + 1 == total:
                     chunk_headers["X-Content-SHA256"] = digest
-                response = self.client.put(
+                response = self.control_client.put(
                     upload_url,
                     headers=chunk_headers,
                     content=chunk,
