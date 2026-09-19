@@ -699,9 +699,16 @@ def test_worker_enrollment_is_single_use_and_issues_real_credential() -> None:
         )
         assert replay.status_code == 401
 
+        worker_headers = {"Authorization": f"Bearer {worker_token}"}
+        pre_register_claim = client.post(
+            "/api/saas/internal/render/tasks/claim",
+            headers=worker_headers,
+        )
+        assert pre_register_claim.status_code == 409
+
         register = client.post(
             "/api/saas/internal/render/register",
-            headers={"Authorization": f"Bearer {worker_token}"},
+            headers=worker_headers,
             json={
                 "name": "remote-enroll-mini",
                 "host": "remote-enroll-mini.local",
