@@ -66,6 +66,7 @@ jobs:
           from app.saas.avatar_ui import JS as avatar_js
           from app.saas.avatar_matting_ui import JS as avatar_matting_js
           from app.saas.product_ui import JS as product_js
+          from app.saas.operations_ui import JS as operations_js
           from app.saas.polish_ui import JS as polish_js
           from app.saas.interaction_patch import JS as interaction_js
           from app.saas.course_studio_ui import JS as course_studio_js
@@ -78,6 +79,7 @@ jobs:
               'avatar-ui': avatar_js,
               'avatar-matting': avatar_matting_js,
               'product-ui': product_js,
+              'operations-ui': operations_js,
               'polish-ui': polish_js,
               'interaction-patch': interaction_js,
               'course-studio': course_studio_js,
@@ -90,7 +92,7 @@ jobs:
           for name, source in modules.items():
               Path(f'/tmp/{name}.js').write_text(source, encoding='utf-8')
           PY
-          for file in /tmp/avatar-ui.js /tmp/avatar-matting.js /tmp/product-ui.js /tmp/polish-ui.js /tmp/interaction-patch.js /tmp/course-studio.js /tmp/course-studio-upgrade.js /tmp/course-studio-asset-picker.js /tmp/course-avatar-mode.js /tmp/course-voice.js /tmp/worker-ui.js; do
+          for file in /tmp/avatar-ui.js /tmp/avatar-matting.js /tmp/product-ui.js /tmp/operations-ui.js /tmp/polish-ui.js /tmp/interaction-patch.js /tmp/course-studio.js /tmp/course-studio-upgrade.js /tmp/course-studio-asset-picker.js /tmp/course-avatar-mode.js /tmp/course-voice.js /tmp/worker-ui.js; do
             node --check "$file"
           done
       - name: Migration smoke test on PostgreSQL
