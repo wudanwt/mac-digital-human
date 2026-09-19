@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -45,6 +46,8 @@ internal_router = APIRouter(prefix="/internal/render", tags=["distributed-worker
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 _UPLOAD_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 _ALLOWED_ARTIFACT_KINDS = {"page_video", "page_audio"}
+
+log = logging.getLogger("digital-human.saas.distributed-worker-api")
 
 
 def _now() -> datetime:
@@ -412,25 +415,49 @@ def _verify_attempt(
     return task, attempt
 
 
-def _file_descriptor(asset: Asset) -> dict[str, Any]:
+def _transfer_urls(*, object_key: str, proxy_url: str) -> dict[str, Any]:
+    if saas_settings.distributed_direct_downloads:
+        try:
+            signed = object_store.signed_get_url(object_key)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Unable to sign direct worker download for %s: %s", object_key, exc)
+        else:
+            if signed:
+                return {
+                    "transfer_mode": "direct",
+                    "url": signed,
+                    "fallback_url": proxy_url,
+                    "url_expires_in": saas_settings.storage_signed_url_seconds,
+                }
+    return {
+        "transfer_mode": "proxy",
+        "url": proxy_url,
+        "fallback_url": None,
+        "url_expires_in": None,
+    }
+
+
+def _file_descriptor(asset: Asset, *, task_id: str) -> dict[str, Any]:
+    proxy_url = f"{saas_settings.api_prefix}/internal/render/tasks/{task_id}/assets/{asset.id}"
     return {
         "id": asset.id,
         "name": asset.name,
         "content_type": asset.content_type,
         "size_bytes": asset.size_bytes,
         "sha256": asset.sha256,
-        "url": f"{saas_settings.api_prefix}/internal/render/tasks/{{task_id}}/assets/{asset.id}",
+        **_transfer_urls(object_key=asset.object_key, proxy_url=proxy_url),
     }
 
 
-def _artifact_descriptor(artifact: RenderArtifact) -> dict[str, Any]:
+def _artifact_descriptor(artifact: RenderArtifact, *, task_id: str) -> dict[str, Any]:
+    proxy_url = f"{saas_settings.api_prefix}/internal/render/tasks/{task_id}/prepared/{artifact.id}"
     return {
         "id": artifact.id,
         "kind": artifact.kind,
         "content_type": artifact.content_type,
         "size_bytes": artifact.size_bytes,
         "sha256": artifact.sha256,
-        "url": f"{saas_settings.api_prefix}/internal/render/tasks/{{task_id}}/prepared/{artifact.id}",
+        **_transfer_urls(object_key=artifact.object_key, proxy_url=proxy_url),
     }
 
 
@@ -459,18 +486,14 @@ def claim_task(
         if asset is None:
             db.rollback()
             raise HTTPException(status_code=409, detail=f"Required task asset is unavailable: {asset_id}")
-        descriptor = _file_descriptor(asset)
-        descriptor["url"] = descriptor["url"].format(task_id=task.id)
-        assets.append(descriptor)
+        assets.append(_file_descriptor(asset, task_id=task.id))
     prepared: list[dict[str, Any]] = []
     for artifact_id in sorted(_allowed_prepared_artifact_ids(db, task)):
         artifact = db.get(RenderArtifact, artifact_id)
         if artifact is None or artifact.parent_job_id != task.parent_job_id or artifact.status != "ready":
             db.rollback()
             raise HTTPException(status_code=409, detail=f"Prepared task artifact is unavailable: {artifact_id}")
-        descriptor = _artifact_descriptor(artifact)
-        descriptor["url"] = descriptor["url"].format(task_id=task.id)
-        prepared.append(descriptor)
+        prepared.append(_artifact_descriptor(artifact, task_id=task.id))
     db.commit()
     return {
         "task": {
