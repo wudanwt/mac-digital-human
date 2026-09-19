@@ -238,6 +238,7 @@ def create_worker_enrollment(
         used_at=None,
     )
     db.add(node)
+    db.flush()
     db.add(enrollment)
     db.commit()
     db.refresh(node)
