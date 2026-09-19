@@ -740,8 +740,16 @@ def _record_artifact(
 
 def _upload_temp_path(task_id: str, attempt_id: str, kind: str) -> Path:
     root = app_settings.workspace_dir / "distributed-uploads" / task_id / attempt_id
-    root.mkdir(parents=True, exist_ok=True)
     return root / f"{kind}.part"
+
+
+def _cleanup_upload_temp(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    for directory in (path.parent, path.parent.parent):
+        try:
+            directory.rmdir()
+        except OSError:
+            break
 
 
 def _parse_upload_range(value: str | None, body_length: int, current_size: int) -> tuple[int, int, int]:
@@ -895,7 +903,7 @@ def commit_direct_artifact_upload(
         transfer_mode="direct",
     )
     db.commit()
-    _upload_temp_path(task_id, attempt_id, kind).unlink(missing_ok=True)
+    _cleanup_upload_temp(_upload_temp_path(task_id, attempt_id, kind))
     return {
         "completed": True,
         "artifact_id": artifact.id,
@@ -928,6 +936,7 @@ async def upload_artifact_chunk(
 
     body = await request.body()
     path = _upload_temp_path(task_id, attempt_id, kind)
+    path.parent.mkdir(parents=True, exist_ok=True)
     current = path.stat().st_size if path.exists() else 0
     start, end, total = _parse_upload_range(content_range, len(body), current)
     if start != current:
@@ -940,13 +949,13 @@ async def upload_artifact_chunk(
     if received < total:
         return {"completed": False, "received_bytes": received, "total_bytes": total}
     if received != total:
-        path.unlink(missing_ok=True)
+        _cleanup_upload_temp(path)
         raise HTTPException(status_code=422, detail="Uploaded artifact exceeds declared size")
     if not x_content_sha256 or len(x_content_sha256.strip()) != 64:
         raise HTTPException(status_code=422, detail="X-Content-SHA256 is required on the final chunk")
     digest = _sha256_path(path)
     if not hmac.compare_digest(digest, x_content_sha256.strip().lower()):
-        path.unlink(missing_ok=True)
+        _cleanup_upload_temp(path)
         raise HTTPException(status_code=422, detail="Artifact SHA-256 mismatch")
 
     key = _artifact_object_key(task, attempt, kind)
@@ -963,7 +972,7 @@ async def upload_artifact_chunk(
         transfer_mode="proxy",
     )
     db.commit()
-    path.unlink(missing_ok=True)
+    _cleanup_upload_temp(path)
     return {"completed": True, "artifact_id": artifact.id, "received_bytes": received, "sha256": digest}
 
 
