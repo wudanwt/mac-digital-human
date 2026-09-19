@@ -30,3 +30,14 @@ def test_local_object_store_publishes_streams_without_partial_objects(tmp_path: 
     assert target is not None
     assert target.read_bytes() == b"stream-content"
     assert not list(target.parent.glob(".*.part"))
+
+
+def test_local_object_store_reports_size_and_has_no_direct_signed_put(tmp_path: Path) -> None:
+    store = LocalObjectStore(tmp_path / "objects")
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"123456789")
+    store.put_file(source, "tenant/page.bin")
+
+    assert store.object_size("tenant/page.bin") == 9
+    assert store.object_size("tenant/missing.bin") is None
+    assert store.signed_put_url("tenant/page.bin") is None
