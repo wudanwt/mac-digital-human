@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from io import BytesIO
@@ -508,6 +509,50 @@ def test_direct_artifact_upload_session_commit_and_idempotency(monkeypatch) -> N
             assert repeated.status_code == 200, repeated.text
             assert repeated.json()["idempotent"] is True
 
+            audio_session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-upload",
+                headers=lease_headers,
+                json={"size_bytes": len(payload), "sha256": digest},
+            )
+            assert audio_session.status_code == 200, audio_session.text
+            audio_body = audio_session.json()
+            audio_commit = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": audio_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert audio_commit.status_code == 200, audio_commit.text
+
+            completed = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/complete",
+                headers=worker_headers,
+                json={
+                    "attempt_id": task["attempt_id"],
+                    "lease_token": task["lease_token"],
+                    "metrics": {"render_seconds": 1.0},
+                    "media": {
+                        "video_seconds": 1.0,
+                        "audio_seconds": 1.0,
+                        "frame_count": 25,
+                        "encoding": {
+                            "width": 1280,
+                            "height": 720,
+                            "fps": "25/1",
+                            "pix_fmt": "yuv420p",
+                            "video_codec": "h264",
+                            "audio_codec": "aac",
+                            "audio_sample_rate": 24000,
+                            "audio_channels": 1,
+                        },
+                    },
+                },
+            )
+            assert completed.status_code == 200, completed.text
+
             with SessionLocal() as db:
                 artifact = db.scalar(
                     select(RenderArtifact).where(
@@ -519,7 +564,9 @@ def test_direct_artifact_upload_session_commit_and_idempotency(monkeypatch) -> N
                 assert artifact.object_key == session_body["object_key"]
                 assert artifact.size_bytes == len(payload)
                 assert artifact.sha256 == digest
-                assert '"transfer_mode": "direct"' in artifact.metadata_json
+                metadata = json.loads(artifact.metadata_json)
+                assert metadata["transfer_mode"] == "direct"
+                assert metadata["media"]["frame_count"] == 25
     finally:
         object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
         object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
