@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
+from app.saas.distributed_render_models import RenderArtifact
 from app.saas.distributed_scheduler import initialize_parent_graph, publish_prepared_pages
 from app.saas.distributed_worker_api import _sha256_path
 from app.saas.models import User
@@ -381,3 +382,217 @@ def test_worker_descriptor_uses_proxy_when_direct_downloads_disabled(monkeypatch
         assert descriptor["fallback_url"] is None
     finally:
         object.__setattr__(saas_settings, "distributed_direct_downloads", original)
+
+
+def test_direct_artifact_upload_session_commit_and_idempotency(monkeypatch) -> None:
+    original_enabled = saas_settings.distributed_render_enabled
+    original_direct = saas_settings.distributed_direct_uploads
+    object.__setattr__(saas_settings, "distributed_render_enabled", True)
+    object.__setattr__(saas_settings, "distributed_direct_uploads", True)
+    try:
+        with TestClient(app) as client:
+            user_token = _register_user(client)
+            parent_job_id, _ppt, master, _audio = _parent(client, user_token)
+            with SessionLocal() as db:
+                initialize_parent_graph(db, parent_job_id)
+                publish_prepared_pages(
+                    db,
+                    parent_job_id=parent_job_id,
+                    pages=[
+                        {
+                            "index": 1,
+                            "narration": "direct upload",
+                            "estimated_seconds": 5,
+                            "master_video_asset_id": master["id"],
+                        }
+                    ],
+                )
+                db.commit()
+
+            _promote_superuser(user_token)
+            provision = client.post(
+                "/api/saas/distributed/workers",
+                headers=_headers(user_token),
+                json={"name": "direct-upload-mini", "slots_total": 1},
+            )
+            assert provision.status_code == 201, provision.text
+            worker_headers = {"Authorization": f"Bearer {provision.json()['token']}"}
+            register = client.post(
+                "/api/saas/internal/render/register",
+                headers=worker_headers,
+                json={
+                    "name": "direct-upload-mini",
+                    "host": "direct-upload-mini.local",
+                    "platform": "macOS",
+                    "machine": "arm64",
+                    "slots_total": 1,
+                    "capabilities": ["musetalk"],
+                    "versions": {"test": "1"},
+                    "code_version": "0.5.0",
+                    "model_version": "musetalk-mlx",
+                    "render_contract_version": saas_settings.render_contract_version,
+                },
+            )
+            assert register.status_code == 200, register.text
+
+            claim = client.post("/api/saas/internal/render/tasks/claim", headers=worker_headers)
+            assert claim.status_code == 200, claim.text
+            task = claim.json()["task"]
+            assert task is not None
+            lease_headers = {
+                **worker_headers,
+                "X-Attempt-Id": task["attempt_id"],
+                "X-Lease-Token": task["lease_token"],
+            }
+
+            payload = b"direct-page-video"
+            digest = hashlib.sha256(payload).hexdigest()
+            signed_keys: list[str] = []
+            monkeypatch.setattr(
+                distributed_worker_api.object_store,
+                "signed_put_url",
+                lambda key: signed_keys.append(key) or f"https://objects.example.test/{key}?signature=put",
+            )
+            monkeypatch.setattr(
+                distributed_worker_api.object_store,
+                "object_size",
+                lambda key: len(payload) if key in signed_keys else None,
+            )
+
+            session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-upload",
+                headers=lease_headers,
+                json={"size_bytes": len(payload), "sha256": digest},
+            )
+            assert session.status_code == 200, session.text
+            session_body = session.json()
+            assert session_body["mode"] == "direct"
+            assert session_body["object_key"].endswith(
+                f"/attempts/{task['attempt_id']}/page_video.mp4"
+            )
+            assert session_body["upload_url"].startswith("https://objects.example.test/")
+
+            wrong_key = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": "another-tenant/forbidden.mp4",
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert wrong_key.status_code == 409
+
+            committed = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": session_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert committed.status_code == 200, committed.text
+            assert committed.json()["completed"] is True
+
+            repeated = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_video/direct-commit",
+                headers=lease_headers,
+                json={
+                    "object_key": session_body["object_key"],
+                    "size_bytes": len(payload),
+                    "sha256": digest,
+                },
+            )
+            assert repeated.status_code == 200, repeated.text
+            assert repeated.json()["idempotent"] is True
+
+            with SessionLocal() as db:
+                artifact = db.scalar(
+                    select(RenderArtifact).where(
+                        RenderArtifact.attempt_id == task["attempt_id"],
+                        RenderArtifact.kind == "page_video",
+                    )
+                )
+                assert artifact is not None
+                assert artifact.object_key == session_body["object_key"]
+                assert artifact.size_bytes == len(payload)
+                assert artifact.sha256 == digest
+                assert '"transfer_mode": "direct"' in artifact.metadata_json
+    finally:
+        object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+        object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
+
+
+def test_direct_artifact_upload_falls_back_when_backend_cannot_sign(monkeypatch) -> None:
+    original_enabled = saas_settings.distributed_render_enabled
+    original_direct = saas_settings.distributed_direct_uploads
+    object.__setattr__(saas_settings, "distributed_render_enabled", True)
+    object.__setattr__(saas_settings, "distributed_direct_uploads", True)
+    try:
+        with TestClient(app) as client:
+            user_token = _register_user(client)
+            parent_job_id, _ppt, master, _audio = _parent(client, user_token)
+            with SessionLocal() as db:
+                initialize_parent_graph(db, parent_job_id)
+                publish_prepared_pages(
+                    db,
+                    parent_job_id=parent_job_id,
+                    pages=[
+                        {
+                            "index": 1,
+                            "narration": "proxy fallback",
+                            "estimated_seconds": 5,
+                            "master_video_asset_id": master["id"],
+                        }
+                    ],
+                )
+                db.commit()
+
+            _promote_superuser(user_token)
+            provision = client.post(
+                "/api/saas/distributed/workers",
+                headers=_headers(user_token),
+                json={"name": "proxy-fallback-mini", "slots_total": 1},
+            )
+            worker_headers = {"Authorization": f"Bearer {provision.json()['token']}"}
+            register = client.post(
+                "/api/saas/internal/render/register",
+                headers=worker_headers,
+                json={
+                    "name": "proxy-fallback-mini",
+                    "host": "proxy-fallback-mini.local",
+                    "platform": "macOS",
+                    "machine": "arm64",
+                    "slots_total": 1,
+                    "capabilities": ["musetalk"],
+                    "versions": {},
+                    "code_version": "0.5.0",
+                    "model_version": "musetalk-mlx",
+                    "render_contract_version": saas_settings.render_contract_version,
+                },
+            )
+            assert register.status_code == 200, register.text
+            claim = client.post("/api/saas/internal/render/tasks/claim", headers=worker_headers)
+            task = claim.json()["task"]
+            assert task is not None
+            lease_headers = {
+                **worker_headers,
+                "X-Attempt-Id": task["attempt_id"],
+                "X-Lease-Token": task["lease_token"],
+            }
+            monkeypatch.setattr(distributed_worker_api.object_store, "signed_put_url", lambda _key: None)
+            payload = b"fallback"
+            session = client.post(
+                f"/api/saas/internal/render/tasks/{task['id']}/artifacts/page_audio/direct-upload",
+                headers=lease_headers,
+                json={
+                    "size_bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                },
+            )
+            assert session.status_code == 200, session.text
+            assert session.json() == {"mode": "proxy", "completed": False}
+    finally:
+        object.__setattr__(saas_settings, "distributed_render_enabled", original_enabled)
+        object.__setattr__(saas_settings, "distributed_direct_uploads", original_direct)
