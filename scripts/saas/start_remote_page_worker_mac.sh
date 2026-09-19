@@ -18,7 +18,6 @@ if [[ -f .env.remote-worker ]]; then
 fi
 
 export SAAS_TTS_PREFETCH=0
-export REMOTE_WORKER_NAME="${REMOTE_WORKER_NAME:-$(scutil --get ComputerName 2>/dev/null || hostname)}"
 export REMOTE_WORKER_RENDER_CONTRACT_VERSION="${REMOTE_WORKER_RENDER_CONTRACT_VERSION:-v1}"
 export REMOTE_WORKER_CODE_VERSION="${REMOTE_WORKER_CODE_VERSION:-0.5.0}"
 export REMOTE_WORKER_MODEL_VERSION="${REMOTE_WORKER_MODEL_VERSION:-musetalk-mlx}"
@@ -54,13 +53,19 @@ fi
 
 if [[ -z "${REMOTE_WORKER_TOKEN:-}" ]]; then
   CREDENTIAL_SOURCE="macOS Keychain"
+  if [[ -z "${REMOTE_WORKER_NAME:-}" ]]; then
+    WORKER_DISPLAY_NAME="$("$PYTHON_BIN" -m app.saas.remote_worker_agent config --field name)"
+  else
+    WORKER_DISPLAY_NAME="$REMOTE_WORKER_NAME"
+  fi
 else
   CREDENTIAL_SOURCE="environment"
+  WORKER_DISPLAY_NAME="${REMOTE_WORKER_NAME:-$(scutil --get ComputerName 2>/dev/null || hostname)}"
 fi
 
 echo "Remote Page Worker"
 echo "  Center API : $REMOTE_WORKER_API_BASE"
-echo "  Node       : $REMOTE_WORKER_NAME"
+echo "  Node       : $WORKER_DISPLAY_NAME"
 echo "  Contract   : $REMOTE_WORKER_RENDER_CONTRACT_VERSION"
 echo "  Cache      : $REMOTE_WORKER_CACHE_DIR (${REMOTE_WORKER_CACHE_GB}GB)"
 echo "  Disk guard : ${REMOTE_WORKER_MIN_DISK_FREE_GB}GB"
