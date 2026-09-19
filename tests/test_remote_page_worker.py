@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import httpx
@@ -33,6 +34,88 @@ def test_remote_api_resolves_task_scoped_relative_urls(tmp_path: Path) -> None:
             "http://192.168.1.10:8918/api/saas/internal/render/tasks/t1/assets/a1"
         )
         assert api._resource_url("https://files.example.test/object") == "https://files.example.test/object"
+    finally:
+        api.close()
+
+
+
+
+def test_direct_download_never_sends_worker_credentials_to_object_store(tmp_path: Path) -> None:
+    api = RemoteApi(_config(tmp_path))
+    payload = b"signed-object-payload"
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update({key.lower(): value for key, value in request.headers.items()})
+        return httpx.Response(200, content=payload, request=request)
+
+    api.transfer_client.close()
+    api.transfer_client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    try:
+        destination = tmp_path / "downloaded.bin"
+        result = api.download(
+            {"id": "task-1", "attempt_id": "attempt-1", "lease_token": "lease-secret"},
+            {
+                "id": "asset-1",
+                "transfer_mode": "direct",
+                "url": "https://objects.example.test/private/asset?signature=abc",
+                "fallback_url": "/api/saas/internal/render/tasks/task-1/assets/asset-1",
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            },
+            destination,
+        )
+        assert result.read_bytes() == payload
+        assert "authorization" not in seen_headers
+        assert "x-attempt-id" not in seen_headers
+        assert "x-lease-token" not in seen_headers
+    finally:
+        api.close()
+
+
+def test_direct_download_falls_back_to_authenticated_center_proxy(tmp_path: Path) -> None:
+    api = RemoteApi(_config(tmp_path))
+    payload = b"center-fallback"
+    direct_calls = 0
+    proxy_headers: dict[str, str] = {}
+
+    def direct_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal direct_calls
+        direct_calls += 1
+        return httpx.Response(403, request=request)
+
+    def proxy_handler(request: httpx.Request) -> httpx.Response:
+        proxy_headers.update({key.lower(): value for key, value in request.headers.items()})
+        return httpx.Response(200, content=payload, request=request)
+
+    api.transfer_client.close()
+    api.control_client.close()
+    api.transfer_client = httpx.Client(transport=httpx.MockTransport(direct_handler), trust_env=False)
+    api.control_client = httpx.Client(
+        base_url=api.origin,
+        headers={"Authorization": "Bearer test-worker-token"},
+        transport=httpx.MockTransport(proxy_handler),
+        trust_env=False,
+    )
+    try:
+        destination = tmp_path / "fallback.bin"
+        result = api.download(
+            {"id": "task-1", "attempt_id": "attempt-1", "lease_token": "lease-secret"},
+            {
+                "id": "asset-1",
+                "transfer_mode": "direct",
+                "url": "https://objects.example.test/private/expired?signature=abc",
+                "fallback_url": "/api/saas/internal/render/tasks/task-1/assets/asset-1",
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            },
+            destination,
+        )
+        assert result.read_bytes() == payload
+        assert direct_calls == 1
+        assert proxy_headers["authorization"] == "Bearer test-worker-token"
+        assert proxy_headers["x-attempt-id"] == "attempt-1"
+        assert proxy_headers["x-lease-token"] == "lease-secret"
     finally:
         api.close()
 
