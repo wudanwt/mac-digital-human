@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from . import avatar_matting_models as _avatar_matting_models  # noqa: F401 - register Base metadata
 from . import distributed_render_models as _distributed_render_models  # noqa: F401 - register Base metadata
+from . import operations_models as _operations_models  # noqa: F401 - register Base metadata
 from . import render_snapshot_models as _render_snapshot_models  # noqa: F401 - register Base metadata
 from . import render_snapshot_service as _render_snapshot_service  # noqa: F401 - register snapshot capture hook
 from . import distributed_graph_hook as _distributed_graph_hook  # noqa: F401 - initialize distributed task graph
