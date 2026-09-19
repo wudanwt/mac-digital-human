@@ -99,15 +99,61 @@ SAAS_DISTRIBUTED_DIRECT_UPLOADS=true
 
 对于自建 MinIO，生成 signed URL 时使用的 endpoint 必须能够被远程 Mac 访问。若 MinIO 只存在于 Center 内网，请保持 direct download 关闭，继续使用 Center proxy。
 
-## 3. 创建 Worker 凭据
+## 3. V3：一次性 Enrollment + macOS Keychain
 
-在 Center 环境执行：
+推荐的新 Worker 接入方式不再把长期 `wrk_...` Token 交给安装人员。
+
+Center 管理员执行：
+
+```bash
+python -m app.saas.manage create-worker-enrollment \
+  --name remote-mac-01 \
+  --slots 1
+```
+
+输出一个短时、单次使用的：
+
+```text
+REMOTE_WORKER_ENROLLMENT_CODE=enr_...
+```
+
+默认 30 分钟过期，可用 `SAAS_DISTRIBUTED_ENROLLMENT_MINUTES` 调整。数据库只保存注册码哈希。
+
+在目标 Mac 上执行：
+
+```bash
+python -m app.saas.remote_worker_agent enroll \
+  --center https://worker-api.example.com/api/saas/internal/render \
+  --name remote-mac-01 \
+  --install
+```
+
+不传 `--code` 时会以隐藏输入方式提示粘贴 Enrollment Code，避免注册码进入 shell history。
+
+Enrollment 成功后：
+
+- Center 生成真正的长期 Worker credential。
+- Mac 将 credential 写入 macOS Keychain，service 为 `com.mac-digital-human.remote-worker`。
+- 本地 `~/Library/Application Support/MacDigitalHumanWorker/config.json` 只保存 Center API、Worker ID、名称，权限为 `0600`。
+- Enrollment Code 立即失效，重复提交会被拒绝。
+- `--install` 会安装并启动用户级 LaunchAgent；重复安装是幂等的。
+- 启动脚本优先使用显式环境变量，未设置 `REMOTE_WORKER_TOKEN` 时自动从 Keychain 读取。
+
+查看本机接入状态：
+
+```bash
+python -m app.saas.remote_worker_agent status
+```
+
+它只显示 Center、Worker ID、名称和 Keychain 是否就绪，不打印 credential。
+
+旧的手工模式仍保留：
 
 ```bash
 python -m app.saas.manage create-worker --name remote-mac-01 --slots 1
 ```
 
-命令只打印一次明文 `REMOTE_WORKER_TOKEN`。Center 数据库只保存其 SHA-256 摘要。
+但生产公网 Worker 建议使用 Enrollment + Keychain。
 
 ## 4. 配置远程 Mac
 
