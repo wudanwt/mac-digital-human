@@ -74,6 +74,9 @@ class SaaSSettings:
     # short-lived object-store PUT URLs. The resumable Center upload remains the
     # compatibility and failure fallback.
     distributed_direct_uploads: bool = _env_bool("SAAS_DISTRIBUTED_DIRECT_UPLOADS", False)
+    # Short-lived, single-use code used to bootstrap a remote Mac without
+    # exposing its long-lived Worker credential to the installer.
+    distributed_enrollment_minutes: int = int(os.getenv("SAAS_DISTRIBUTED_ENROLLMENT_MINUTES", "30"))
 
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
