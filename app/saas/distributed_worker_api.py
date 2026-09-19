@@ -152,6 +152,15 @@ class FailRequest(LeaseRequest):
     metrics: dict[str, Any] = Field(default_factory=dict)
 
 
+class DirectUploadRequest(BaseModel):
+    size_bytes: int = Field(ge=1)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class DirectUploadCommitRequest(DirectUploadRequest):
+    object_key: str = Field(min_length=1, max_length=900)
+
+
 @admin_router.post("", status_code=201)
 def provision_worker(
     body: WorkerProvisionRequest,
@@ -676,6 +685,59 @@ def download_prepared_artifact(
     return _stream_path(path, range_header=range_header, content_type=artifact.content_type, background=background)
 
 
+def _artifact_spec(kind: str) -> tuple[str, str]:
+    if kind == "page_video":
+        return ".mp4", "video/mp4"
+    if kind == "page_audio":
+        return ".wav", "audio/wav"
+    raise HTTPException(status_code=422, detail="Unsupported artifact kind")
+
+
+def _artifact_object_key(task: RenderSubtask, attempt: RenderAttempt, kind: str) -> str:
+    suffix, _ = _artifact_spec(kind)
+    return f"{task.tenant_id}/distributed/{task.parent_job_id}/attempts/{attempt.id}/{kind}{suffix}"
+
+
+def _existing_attempt_artifact(db: Session, attempt_id: str, kind: str) -> RenderArtifact | None:
+    return db.scalar(
+        select(RenderArtifact).where(
+            RenderArtifact.attempt_id == attempt_id,
+            RenderArtifact.kind == kind,
+        )
+    )
+
+
+def _record_artifact(
+    db: Session,
+    *,
+    task: RenderSubtask,
+    attempt: RenderAttempt,
+    kind: str,
+    object_key: str,
+    size_bytes: int,
+    sha256: str,
+    transfer_mode: str,
+) -> RenderArtifact:
+    _, content_type = _artifact_spec(kind)
+    artifact = RenderArtifact(
+        tenant_id=task.tenant_id,
+        parent_job_id=task.parent_job_id,
+        subtask_id=task.id,
+        attempt_id=attempt.id,
+        kind=kind,
+        slide_index=task.slide_index,
+        object_key=object_key,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        status="ready",
+        metadata_json=json.dumps({"transfer_mode": transfer_mode}, sort_keys=True),
+    )
+    db.add(artifact)
+    db.flush()
+    return artifact
+
+
 def _upload_temp_path(task_id: str, attempt_id: str, kind: str) -> Path:
     root = app_settings.workspace_dir / "distributed-uploads" / task_id / attempt_id
     root.mkdir(parents=True, exist_ok=True)
@@ -710,11 +772,136 @@ def upload_status(
         raise HTTPException(status_code=422, detail="Unsupported artifact kind")
     attempt_id, lease_token = _lease_headers(x_attempt_id, x_lease_token)
     _, attempt = _verify_attempt(db, task_id=task_id, node=node, attempt_id=attempt_id, lease_token=lease_token)
-    existing = db.scalar(select(RenderArtifact).where(RenderArtifact.attempt_id == attempt.id, RenderArtifact.kind == kind))
+    existing = _existing_attempt_artifact(db, attempt.id, kind)
     if existing is not None:
         return {"completed": True, "received_bytes": existing.size_bytes, "sha256": existing.sha256}
     path = _upload_temp_path(task_id, attempt_id, kind)
     return {"completed": False, "received_bytes": path.stat().st_size if path.exists() else 0}
+
+
+@internal_router.post("/tasks/{task_id}/artifacts/{kind}/direct-upload")
+def begin_direct_artifact_upload(
+    task_id: str,
+    kind: str,
+    body: DirectUploadRequest,
+    node: Annotated[WorkerNode, Depends(get_worker_node)],
+    db: Annotated[Session, Depends(get_db)],
+    x_attempt_id: Annotated[str | None, Header(alias="X-Attempt-Id")] = None,
+    x_lease_token: Annotated[str | None, Header(alias="X-Lease-Token")] = None,
+) -> dict[str, Any]:
+    if kind not in _ALLOWED_ARTIFACT_KINDS:
+        raise HTTPException(status_code=422, detail="Unsupported artifact kind")
+    if body.size_bytes > saas_settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Artifact exceeds configured upload limit")
+    attempt_id, lease_token = _lease_headers(x_attempt_id, x_lease_token)
+    task, attempt = _verify_attempt(
+        db,
+        task_id=task_id,
+        node=node,
+        attempt_id=attempt_id,
+        lease_token=lease_token,
+    )
+    existing = _existing_attempt_artifact(db, attempt.id, kind)
+    digest = body.sha256.lower()
+    if existing is not None:
+        if existing.size_bytes == body.size_bytes and hmac.compare_digest(existing.sha256, digest):
+            return {
+                "mode": "completed",
+                "completed": True,
+                "artifact_id": existing.id,
+                "received_bytes": existing.size_bytes,
+                "sha256": existing.sha256,
+            }
+        raise HTTPException(status_code=409, detail="Artifact already finalized for this attempt")
+    if not saas_settings.distributed_direct_uploads:
+        return {"mode": "proxy", "completed": False}
+
+    key = _artifact_object_key(task, attempt, kind)
+    try:
+        signed = object_store.signed_put_url(key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Unable to sign direct worker upload for %s: %s", key, exc)
+        signed = None
+    if not signed:
+        return {"mode": "proxy", "completed": False}
+    return {
+        "mode": "direct",
+        "completed": False,
+        "upload_url": signed,
+        "object_key": key,
+        "expires_in": saas_settings.storage_signed_url_seconds,
+    }
+
+
+@internal_router.post("/tasks/{task_id}/artifacts/{kind}/direct-commit")
+def commit_direct_artifact_upload(
+    task_id: str,
+    kind: str,
+    body: DirectUploadCommitRequest,
+    node: Annotated[WorkerNode, Depends(get_worker_node)],
+    db: Annotated[Session, Depends(get_db)],
+    x_attempt_id: Annotated[str | None, Header(alias="X-Attempt-Id")] = None,
+    x_lease_token: Annotated[str | None, Header(alias="X-Lease-Token")] = None,
+) -> dict[str, Any]:
+    if kind not in _ALLOWED_ARTIFACT_KINDS:
+        raise HTTPException(status_code=422, detail="Unsupported artifact kind")
+    if body.size_bytes > saas_settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Artifact exceeds configured upload limit")
+    attempt_id, lease_token = _lease_headers(x_attempt_id, x_lease_token)
+    task, attempt = _verify_attempt(
+        db,
+        task_id=task_id,
+        node=node,
+        attempt_id=attempt_id,
+        lease_token=lease_token,
+    )
+    digest = body.sha256.lower()
+    existing = _existing_attempt_artifact(db, attempt.id, kind)
+    if existing is not None:
+        if existing.size_bytes == body.size_bytes and hmac.compare_digest(existing.sha256, digest):
+            return {
+                "completed": True,
+                "artifact_id": existing.id,
+                "received_bytes": existing.size_bytes,
+                "sha256": existing.sha256,
+                "idempotent": True,
+            }
+        raise HTTPException(status_code=409, detail="Artifact already finalized for this attempt")
+
+    expected_key = _artifact_object_key(task, attempt, kind)
+    if not hmac.compare_digest(body.object_key, expected_key):
+        raise HTTPException(status_code=409, detail="Direct upload object key mismatch")
+    try:
+        remote_size = object_store.object_size(expected_key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Unable to HEAD direct worker upload %s: %s", expected_key, exc)
+        raise HTTPException(status_code=503, detail="Unable to verify direct upload") from exc
+    if remote_size is None:
+        raise HTTPException(status_code=409, detail="Direct upload object is not available")
+    if remote_size != body.size_bytes:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Direct upload size mismatch: object={remote_size} expected={body.size_bytes}",
+        )
+
+    artifact = _record_artifact(
+        db,
+        task=task,
+        attempt=attempt,
+        kind=kind,
+        object_key=expected_key,
+        size_bytes=body.size_bytes,
+        sha256=digest,
+        transfer_mode="direct",
+    )
+    db.commit()
+    _upload_temp_path(task_id, attempt_id, kind).unlink(missing_ok=True)
+    return {
+        "completed": True,
+        "artifact_id": artifact.id,
+        "received_bytes": body.size_bytes,
+        "sha256": digest,
+    }
 
 
 @internal_router.put("/tasks/{task_id}/artifacts/{kind}")
@@ -762,26 +949,19 @@ async def upload_artifact_chunk(
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="Artifact SHA-256 mismatch")
 
-    suffix = ".mp4" if kind == "page_video" else ".wav"
-    key = f"{task.tenant_id}/distributed/{task.parent_job_id}/attempts/{attempt.id}/{kind}{suffix}"
+    key = _artifact_object_key(task, attempt, kind)
     uri = object_store.put_file(path, key)
     del uri
-    artifact = RenderArtifact(
-        tenant_id=task.tenant_id,
-        parent_job_id=task.parent_job_id,
-        subtask_id=task.id,
-        attempt_id=attempt.id,
+    artifact = _record_artifact(
+        db,
+        task=task,
+        attempt=attempt,
         kind=kind,
-        slide_index=task.slide_index,
         object_key=key,
-        content_type="video/mp4" if kind == "page_video" else "audio/wav",
         size_bytes=received,
         sha256=digest,
-        status="ready",
-        metadata_json="{}",
+        transfer_mode="proxy",
     )
-    db.add(artifact)
-    db.flush()
     db.commit()
     path.unlink(missing_ok=True)
     return {"completed": True, "artifact_id": artifact.id, "received_bytes": received, "sha256": digest}
