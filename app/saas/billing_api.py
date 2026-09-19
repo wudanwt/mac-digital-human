@@ -81,15 +81,26 @@ def apply_paid_order(
     if current_end is not None and current_end.tzinfo is None:
         current_end = current_end.replace(tzinfo=timezone.utc)
     starts_at = now
-    if activation_mode == "renew" and sub.plan_code == plan.code and sub.status == "active" and current_end and current_end > now:
+    extending_current = (
+        activation_mode == "renew"
+        and sub.plan_code == plan.code
+        and sub.status == "active"
+        and current_end is not None
+        and current_end > now
+    )
+    if extending_current:
         starts_at = current_end
     ends_at = starts_at + timedelta(days=30 * months)
     granted_seconds = plan.monthly_minutes * 60 * months
     sub.plan_code = plan.code
     sub.status = "active"
-    sub.remaining_seconds = granted_seconds
-    sub.period_started_at = starts_at
-    sub.period_ends_at = ends_at
+    if extending_current:
+        sub.remaining_seconds += granted_seconds
+        sub.period_ends_at = ends_at
+    else:
+        sub.remaining_seconds = granted_seconds
+        sub.period_started_at = starts_at
+        sub.period_ends_at = ends_at
     db.add(
         SubscriptionPeriod(
             tenant_id=order.tenant_id,
