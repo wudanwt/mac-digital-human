@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from .models import PaymentOrder, Plan, Subscription
+from .operations_models import SubscriptionPeriod
 from .security import Principal, get_principal, require_admin
 from .services import active_subscription, audit, usage_summary
 from .settings import saas_settings
@@ -49,29 +50,76 @@ def _order_dict(item: PaymentOrder) -> dict:
     }
 
 
-def apply_paid_order(db: Session, order: PaymentOrder) -> Subscription:
+def apply_paid_order(
+    db: Session,
+    order: PaymentOrder,
+    *,
+    months: int = 1,
+    activation_mode: str = "replace",
+    actor_user_id: str | None = None,
+    note: str = "",
+) -> Subscription:
+    """Settle an order and materialize both current entitlement and history.
+
+    V1 treats a multi-month manual contract as one entitlement period and grants
+    the aggregate included minutes up front.  The immutable period row preserves
+    what was sold even though Subscription remains the mutable current state.
+    """
     if order.status == "paid":
         return active_subscription(db, order.tenant_id)
     plan = db.get(Plan, order.plan_code)
     if plan is None or not plan.is_active:
         raise HTTPException(status_code=422, detail="Plan unavailable")
+    months = max(1, min(int(months), 36))
+    if activation_mode not in {"replace", "renew"}:
+        raise HTTPException(status_code=422, detail="Unsupported activation mode")
     now = datetime.now(timezone.utc)
     order.status = "paid"
     order.paid_at = now
     sub = active_subscription(db, order.tenant_id)
+    current_end = sub.period_ends_at
+    if current_end is not None and current_end.tzinfo is None:
+        current_end = current_end.replace(tzinfo=timezone.utc)
+    starts_at = now
+    if activation_mode == "renew" and sub.plan_code == plan.code and sub.status == "active" and current_end and current_end > now:
+        starts_at = current_end
+    ends_at = starts_at + timedelta(days=30 * months)
+    granted_seconds = plan.monthly_minutes * 60 * months
     sub.plan_code = plan.code
     sub.status = "active"
-    sub.remaining_seconds = plan.monthly_minutes * 60
-    sub.period_started_at = now
-    sub.period_ends_at = now + timedelta(days=30)
+    sub.remaining_seconds = granted_seconds
+    sub.period_started_at = starts_at
+    sub.period_ends_at = ends_at
+    db.add(
+        SubscriptionPeriod(
+            tenant_id=order.tenant_id,
+            subscription_id=sub.id,
+            plan_code=plan.code,
+            source_order_id=order.id,
+            status="active",
+            activation_mode=activation_mode,
+            granted_seconds=granted_seconds,
+            amount_cny=order.amount_cny,
+            started_at=starts_at,
+            ends_at=ends_at,
+            note=note.strip(),
+            created_by_user_id=actor_user_id or order.user_id,
+        )
+    )
     audit(
         db,
         action="billing.plan_activated",
         tenant_id=order.tenant_id,
-        user_id=order.user_id,
+        user_id=actor_user_id or order.user_id,
         target_type="order",
         target_id=order.id,
-        details={"plan": plan.code, "provider": order.provider},
+        details={
+            "plan": plan.code,
+            "provider": order.provider,
+            "months": months,
+            "activation_mode": activation_mode,
+            "granted_minutes": plan.monthly_minutes * months,
+        },
     )
     return sub
 
