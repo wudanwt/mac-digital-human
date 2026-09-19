@@ -60,6 +60,30 @@ def test_remote_api_resolves_task_scoped_relative_urls(tmp_path: Path) -> None:
 
 
 
+def test_public_plain_http_direct_download_uses_center_fallback(tmp_path: Path) -> None:
+    api = RemoteApi(_config(tmp_path))
+    try:
+        task = {"id": "task-1", "attempt_id": "attempt-1", "lease_token": "lease-secret"}
+        candidates = api._download_candidates(
+            task,
+            {
+                "id": "asset-1",
+                "transfer_mode": "direct",
+                "url": "http://objects.example.test/private/asset?signature=abc",
+                "fallback_url": "/api/saas/internal/render/tasks/task-1/assets/asset-1",
+            },
+        )
+        assert len(candidates) == 1
+        mode, client, url, headers = candidates[0]
+        assert mode == "proxy"
+        assert client is api.control_client
+        assert url == "http://192.168.1.10:8918/api/saas/internal/render/tasks/task-1/assets/asset-1"
+        assert headers["X-Attempt-Id"] == "attempt-1"
+        assert headers["X-Lease-Token"] == "lease-secret"
+    finally:
+        api.close()
+
+
 def test_direct_download_never_sends_worker_credentials_to_object_store(tmp_path: Path) -> None:
     api = RemoteApi(_config(tmp_path))
     payload = b"signed-object-payload"
