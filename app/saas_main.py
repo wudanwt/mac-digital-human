@@ -34,6 +34,7 @@ from .saas.interaction_patch import javascript_response as interaction_javascrip
 from .saas.job_detail_ui import css_response as job_detail_css_response
 from .saas.job_detail_ui import javascript_response as job_detail_javascript_response
 from .saas.middleware import RateLimitMiddleware
+from .saas.operations_ui import javascript_response as operations_javascript_response
 from .saas.polish_ui import javascript_response as polish_javascript_response
 from .saas.product_ui import javascript_response as product_javascript_response
 from .saas.settings import saas_settings
@@ -91,6 +92,7 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/voice-clone-guard.js"></script>'
         '<script src="/avatar-matting.js"></script>'
         '<script src="/product-ui.js"></script>'
+        '<script src="/operations-ui.js"></script>'
         '<script src="/polish-ui.js"></script>'
         '<script src="/interaction-patch.js"></script>'
         '<script src="/course-studio.js"></script>'
@@ -167,6 +169,11 @@ def avatar_matting_script():
 @app.get("/product-ui.js", include_in_schema=False)
 def product_ui_script():
     return product_javascript_response()
+
+
+@app.get("/operations-ui.js", include_in_schema=False)
+def operations_ui_script():
+    return operations_javascript_response()
 
 
 @app.get("/polish-ui.js", include_in_schema=False)

@@ -19,6 +19,7 @@ from .digital_human_api import router as digital_human_router
 from .distributed_worker_api import admin_router as distributed_worker_admin_router
 from .distributed_worker_api import internal_router as distributed_worker_internal_router
 from .job_detail_api import router as job_detail_router
+from .operations_api import router as operations_router
 from .security import require_superuser
 from .settings import saas_settings
 from .storage import object_store
@@ -117,6 +118,7 @@ def capabilities() -> dict:
         "usage_quota": True,
         "plans": True,
         "admin": True,
+        "operations_management": True,
         "consent_records": True,
         "content_reports": True,
         "ai_content_label": saas_settings.require_ai_label,
@@ -154,6 +156,7 @@ for child in (
     dashboard_router,
     billing_router,
     compliance_router,
+    operations_router,
     admin_router,
     admin_compliance_router,
 ):
