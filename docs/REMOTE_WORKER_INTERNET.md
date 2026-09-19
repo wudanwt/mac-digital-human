@@ -26,7 +26,7 @@ https://worker-api.example.com
 
 控制面负责注册、心跳、claim、lease、progress、complete 与上传回执。大体积不可变输入在启用 direct download 后由 Worker 使用短时 signed URL 直接从对象存储下载。Worker 不持有 PostgreSQL、Redis、S3、OSS 或 COS 凭据。
 
-当前版本仍将 page_audio / page_video 通过 Center 的 resumable upload API 回传。这样保留现有 attempt/lease/SHA-256 校验与断点续传，后续可再升级为 signed PUT / multipart upload。
+Internet V2 可将 page_audio / page_video 通过短时 Signed PUT URL 直接上传到对象存储。Center 只签发目标 object key，并在提交时执行 HEAD/size 校验；最终 finalize 仍会重新 materialize 并校验 SHA-256。若对象存储不支持 Signed PUT、URL 不安全/不可达或直传失败，Worker 自动回退到原有 Center 8MB 分片上传。
 
 ## 1. 暴露 HTTPS Center
 
@@ -81,6 +81,7 @@ OSS_ACCESS_KEY_ID=...
 OSS_ACCESS_KEY_SECRET=...
 STORAGE_SIGNED_URL_SECONDS=3600
 SAAS_DISTRIBUTED_DIRECT_DOWNLOADS=true
+SAAS_DISTRIBUTED_DIRECT_UPLOADS=true
 ```
 
 开启 `SAAS_DISTRIBUTED_DIRECT_DOWNLOADS=true` 后，claim manifest 会优先返回：
@@ -154,8 +155,27 @@ signed URL 直连失败时 Worker 会自动回退到 `fallback_url`，使用原�
 5. 临时使 signed URL 失败，Worker 能自动走 Center fallback。
 6. 同一数字人第二次任务命中 ContentCache，不重复下载母版视频。
 7. Worker Token 不出现在对象存储请求头或对象存储日志中。
-8. 任务完成后 page_audio/page_video 仍可通过 Center resumable upload 正常回传并 finalize。
+8. 开启 direct uploads 后，对象存储访问日志能看到 Worker 直接 PUT page_audio/page_video。
+9. 临时让 Signed PUT 返回失败，Worker 能自动回退 Center resumable upload。
+10. Center direct-commit 只接受当前 attempt 对应的 deterministic object key，且会校验对象大小。
+11. finalize 会重新计算下载后文件的 SHA-256；错误哈希不能进入最终成片。
+
+## Internet V2 上传协议
+
+Worker 在上传每个 page artifact 前先调用：
+
+```text
+POST /tasks/{task_id}/artifacts/{kind}/direct-upload
+```
+
+Center 返回 `mode=direct` 时包含短时 `upload_url` 与由 Center 生成的 `object_key`。Worker 使用无凭据的 transfer client 直接 PUT，成功后调用：
+
+```text
+POST /tasks/{task_id}/artifacts/{kind}/direct-commit
+```
+
+Center 校验 active lease、attempt ownership、object key 和对象大小后创建 `RenderArtifact`。Worker 不拥有对象存储永久凭据，也不能选择任意 object key。
 
 ## 下一阶段
 
-Internet V2 可将输出上传也拆到数据面：Center 签发 signed PUT / multipart session，Worker 直接上传 S3/OSS/COS，再向 Center 提交 object key、size、SHA-256，由 Center HEAD 校验后创建 RenderArtifact。
+当单页输出明显超过普通 PUT 的可靠传输范围时，再增加真正的 multipart upload session、分片 ETag 列表和服务端 abort/cleanup。当前数字人单页 MP4/WAV 保留 Signed PUT + Center chunk fallback，协议更简单且已有完整失败回退。
