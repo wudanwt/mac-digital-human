@@ -366,7 +366,7 @@ HTML = r'''<!doctype html>
       <div class="hero-features">
         <div class="hero-feature">
           <svg viewBox="0 0 24 24" fill="none"><path d="M5 4h14v16H5zM8 8h8M8 12h6M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <span><b>PPT → 讲稿</b> 智能课程生产</span>
+          <span><b>PPT / 讲稿导入</b> · 智能课程生产</span>
         </div>
         <div class="hero-feature">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 14a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 20c1.3-3 3.7-4.5 7-4.5S17.7 17 19 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
