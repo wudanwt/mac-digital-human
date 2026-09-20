@@ -88,6 +88,8 @@ class RemoteWorkerConfig:
     upload_chunk_bytes: int
     request_timeout_seconds: float
     render_backend: str = "mlx"
+    auxiliary_mode: str = "normal"
+    auxiliary_fallback_poll_seconds: float = 8.0
 
     @classmethod
     def from_env(cls) -> "RemoteWorkerConfig":
@@ -120,6 +122,12 @@ class RemoteWorkerConfig:
             if agent_runtime is not None and agent_runtime.name
             else socket.gethostname()
         )
+        auxiliary_mode = os.getenv("REMOTE_WORKER_AUXILIARY_MODE", "normal").strip().lower()
+        if auxiliary_mode not in {"preferred", "normal", "fallback", "off"}:
+            raise RuntimeError(
+                "REMOTE_WORKER_AUXILIARY_MODE must be preferred, normal, fallback, or off"
+            )
+
         return cls(
             api_base=api_base,
             token=token,
@@ -175,6 +183,11 @@ class RemoteWorkerConfig:
             ),
             request_timeout_seconds=float(os.getenv("REMOTE_WORKER_HTTP_TIMEOUT_SECONDS", "120")),
             render_backend=render_backend,
+            auxiliary_mode=auxiliary_mode,
+            auxiliary_fallback_poll_seconds=max(
+                1.0,
+                float(os.getenv("REMOTE_WORKER_AUXILIARY_FALLBACK_SECONDS", "8")),
+            ),
         )
 
 
@@ -308,13 +321,14 @@ class RemoteApi:
         encoder = video_encoder_info() if self.config.render_backend == "cuda" else None
         capabilities = [
             "musetalk",
-            "speech-preview",
-            "portrait-matting",
             "transparent-avatar-compose",
             "script-media-cues",
             f"backend:{self.config.render_backend}",
             "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
         ]
+        if self.config.auxiliary_mode != "off":
+            capabilities.extend(["speech-preview", "portrait-matting"])
+        capabilities.append(f"aux-routing:{self.config.auxiliary_mode}")
         if encoder is not None:
             capabilities.append(f"video-encoder:{encoder['selected']}")
             resident_enabled = os.getenv("MUSETALK_CUDA_RESIDENT", "1").strip().lower() not in {
@@ -1412,6 +1426,9 @@ class RemotePageWorker:
         self.register()
         heartbeat = self.start_heartbeat()
         prefer_auxiliary = False
+        next_auxiliary_fallback_at = (
+            time.monotonic() + self.config.auxiliary_fallback_poll_seconds
+        )
         try:
             while not self._stop.is_set():
                 if not self._disk_ready():
@@ -1426,10 +1443,29 @@ class RemotePageWorker:
                     continue
                 self._last_error = None
                 try:
-                    auxiliary = self.api.claim_auxiliary() if prefer_auxiliary else None
-                    task = None if auxiliary else self.api.claim()
-                    if task is None and auxiliary is None and not prefer_auxiliary:
+                    mode = self.config.auxiliary_mode
+                    if mode == "off":
+                        auxiliary = None
+                        task = self.api.claim()
+                    elif mode == "preferred":
                         auxiliary = self.api.claim_auxiliary()
+                        task = None if auxiliary else self.api.claim()
+                    elif mode == "fallback":
+                        now_monotonic = time.monotonic()
+                        if now_monotonic >= next_auxiliary_fallback_at:
+                            auxiliary = self.api.claim_auxiliary()
+                            next_auxiliary_fallback_at = (
+                                now_monotonic + self.config.auxiliary_fallback_poll_seconds
+                            )
+                            task = None if auxiliary else self.api.claim()
+                        else:
+                            auxiliary = None
+                            task = self.api.claim()
+                    else:
+                        auxiliary = self.api.claim_auxiliary() if prefer_auxiliary else None
+                        task = None if auxiliary else self.api.claim()
+                        if task is None and auxiliary is None and not prefer_auxiliary:
+                            auxiliary = self.api.claim_auxiliary()
                 except Exception as exc:  # noqa: BLE001
                     self._last_error = str(exc)
                     log.warning("Task claim failed: %s", exc)
@@ -1438,7 +1474,8 @@ class RemotePageWorker:
                 if task is None and auxiliary is None:
                     time.sleep(1)
                     continue
-                prefer_auxiliary = not prefer_auxiliary
+                if self.config.auxiliary_mode == "normal":
+                    prefer_auxiliary = not prefer_auxiliary
                 if auxiliary is not None:
                     self.process_auxiliary_task(auxiliary)
                 else:
