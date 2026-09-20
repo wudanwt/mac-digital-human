@@ -18,6 +18,7 @@ from ..composer import CourseComposer, media_duration
 from ..config import settings
 from .database import SessionLocal
 from .domain import JobStatus, RenderJob
+from .media_cues import media_cue_asset_ids
 from .models import Asset, Course, RenderJobRecord
 from .queue import job_queue
 from .render_core import RenderWorkspace, execute_page, finalize_course, prepare_course
@@ -216,6 +217,26 @@ class LocalMLXCourseHandler:
         master_path = _materialize(master_asset, work)
         ref_path = _materialize(ref_asset, work) if ref_asset else None
         direct_audio_path = _materialize(direct_audio, work) if direct_audio else None
+        media_cue_cache: dict[str, Path] = {}
+
+        def media_cue_assets(plan) -> dict[str, Path]:
+            raw_cues = plan.override.get("media_cues")
+            cue_ids = media_cue_asset_ids(raw_cues)
+            if not cue_ids:
+                return {}
+            resolved: dict[str, Path] = {}
+            with SessionLocal() as db:
+                for asset_id in sorted(cue_ids):
+                    if asset_id not in media_cue_cache:
+                        item = _asset(db, job.tenant_id, asset_id)
+                        if item is None or item.status != "ready":
+                            raise RuntimeError(f"内容镜头素材不可用: {asset_id}")
+                        _assert_snapshot_asset(inputs.snapshot, item)
+                        suffix = Path(item.name).suffix or ".bin"
+                        target = work / "media-cues" / f"{item.id}{suffix}"
+                        media_cue_cache[asset_id] = object_store.materialize(item.object_key, target)
+                    resolved[asset_id] = media_cue_cache[asset_id]
+            return resolved
 
         if progress:
             progress(
@@ -419,6 +440,19 @@ class LocalMLXCourseHandler:
                             current_slide=plan.index,
                             detail=f"正在合成第 {plan.index} 页画面",
                         )
+                    elif name == "media_cue_start":
+                        slide_state["content_shots"] = "running"
+                        emit(
+                            24 + int((pos - 1) / total * 70),
+                            f"slide_{plan.index}_content_shots",
+                            stage=4,
+                            stage_name="内容镜头合成",
+                            current_slide=plan.index,
+                            detail=f"正在应用第 {plan.index} 页内容镜头",
+                        )
+                    elif name == "media_cue_done":
+                        slide_state["content_shots"] = "done"
+                        slide_state["content_shot_timeline"] = detail.get("timeline") or []
                     elif name == "compose_done":
                         slide_state["compose"] = "done"
 
@@ -434,6 +468,7 @@ class LocalMLXCourseHandler:
                     settings_payload=settings_payload,
                     prepared_audio=audio_path,
                     prepared_audio_source=audio_source,
+                    media_cue_assets=media_cue_assets(plan),
                     on_stage=page_stage,
                 )
                 result = replace(result, tts_elapsed_seconds=audio_elapsed, audio_source=audio_source)
