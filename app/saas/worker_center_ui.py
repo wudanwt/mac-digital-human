@@ -196,10 +196,7 @@ JS = r'''
       </div>
     `;
 
-    $('workerAdd').onclick=()=>{
-      if(typeof workerEnrollmentModal==='function')workerEnrollmentModal();
-      else toast('Worker 注册功能未加载');
-    };
+    $('workerAdd').onclick=()=>openWorkerEnrollment(groups);
     $('workerSearch').oninput=e=>{workerView.search=e.target.value;clearTimeout(window.__workerSearchTimer);window.__workerSearchTimer=setTimeout(()=>renderWorkerCenter(),180)};
     $('workerGroupFilter').onchange=e=>{workerView.group=e.target.value;renderWorkerCenter()};
     $('workerStatusFilter').onchange=e=>{workerView.status=e.target.value;renderWorkerCenter()};
@@ -217,6 +214,29 @@ JS = r'''
       if(!confirm('吊销后该 Worker 的现有凭据立即失效，且不能继续接任务。确定继续？'))return;
       try{await api('/distributed/workers/'+b.dataset.workerRevoke+'/revoke',{method:'POST'});toast('Worker 已吊销');await renderWorkerCenter()}catch(e){toast(e.message)}
     });
+  }
+
+  function openWorkerEnrollment(groups){
+    openModal(`<div class="modal-head"><div><h2 style="margin-bottom:4px">新增 Worker</h2><div class="muted">生成一次性注册码，目标节点完成 Enrollment 后自动进入算力中心。</div></div><button class="iconbtn" data-close>×</button></div>
+      <form id="workerCenterEnrollForm">
+        <div class="row"><div class="field"><label>Worker 名称</label><input id="workerCenterEnrollName" value="remote-mac-01" maxlength="120" required></div><div class="field"><label>分组</label><input id="workerCenterEnrollGroup" list="workerGroupOptions" value="default" maxlength="80"><datalist id="workerGroupOptions">${groups.map(g=>`<option value="${esc(g)}"></option>`).join('')}</datalist></div></div>
+        <div class="field"><label>并发槽位</label><input id="workerCenterEnrollSlots" type="number" min="1" max="4" value="1" required></div>
+        <div class="muted" style="margin:8px 0 14px">建议生产节点按用途分组，例如 production、mac-cluster、cuda-cluster、test。</div>
+        <button class="primary wide">生成注册码</button>
+      </form>`);
+    $('modalRoot').querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal);
+    $('workerCenterEnrollForm').onsubmit=async e=>{
+      e.preventDefault();
+      try{
+        const data=await api('/distributed/workers/enrollments',{method:'POST',body:{
+          name:$('workerCenterEnrollName').value,
+          group_name:$('workerCenterEnrollGroup').value||'default',
+          slots_total:Number($('workerCenterEnrollSlots').value)
+        }});
+        if(typeof workerEnrollmentResult==='function')workerEnrollmentResult(data);
+        else {closeModal();toast('Worker 注册码已生成')}
+      }catch(err){toast(err.message)}
+    };
   }
 
   function openWorkerEdit(w){
