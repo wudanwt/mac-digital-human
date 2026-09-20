@@ -347,6 +347,9 @@ def process_prepare(task_id: str) -> bool:
                     audio_source = "synthesized"
                 avatar_mode = str(frozen_page.get("avatar_mode") or course_settings.get("avatar_mode") or "original").lower()
                 media_cues = frozen_page.get("media_cues") if isinstance(frozen_page.get("media_cues"), list) else []
+                required_capabilities = ["script-media-cues"] if media_cues else []
+                if any(isinstance(cue, dict) and isinstance(cue.get("overlay_box"), dict) for cue in media_cues):
+                    required_capabilities.append("script-media-cues-layout-v1")
                 page_payload = {
                     "index": plan.index,
                     "title": plan.title,
@@ -363,7 +366,7 @@ def process_prepare(task_id: str) -> bool:
                     "audio_source": audio_source,
                     "background_asset_id": frozen_page.get("background_asset_id"),
                     "media_cues": media_cues,
-                    "required_capabilities": ["script-media-cues"] if media_cues else [],
+                    "required_capabilities": required_capabilities,
                     "slide_artifact_id": slide_artifact.id,
                     "render_contract_version": saas_settings.render_contract_version,
                     "estimated_seconds": max(4.0, len(plan.narration) / 4.0),
