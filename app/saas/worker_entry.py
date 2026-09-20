@@ -302,7 +302,7 @@ def _start_worker_heartbeat(engine: str) -> None:
                 "machine": platform.machine(),
                 "pid": os.getpid(),
                 "updated_at": time.time(),
-                "capabilities": ["musetalk", "portrait-matting", "speech-preview", "transparent-avatar-compose"],
+                "capabilities": ["musetalk", "portrait-matting", "speech-preview", "transparent-avatar-compose", "script-media-cues"],
             }
             try:
                 client.set(key, json.dumps(payload, ensure_ascii=False), ex=20)
