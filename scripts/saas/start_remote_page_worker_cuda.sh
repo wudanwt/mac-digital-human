@@ -33,6 +33,15 @@ export MUSETALK_CUDA_MASTER_CACHE_GPU_GB="${MUSETALK_CUDA_MASTER_CACHE_GPU_GB:-4
 
 bash "$ROOT/scripts/cloud/check_musetalk_cuda.sh"
 
+echo
+echo "=== CUDA pipeline ==="
+echo "MuseTalk streaming       : $MUSETALK_CUDA_STREAMING"
+echo "MuseTalk resident runtime: $MUSETALK_CUDA_RESIDENT"
+echo "Resident fallback to V2  : $MUSETALK_CUDA_RESIDENT_FALLBACK"
+echo "Master cache items       : $MUSETALK_CUDA_MASTER_CACHE_ITEMS"
+echo "Master cache CPU GB      : $MUSETALK_CUDA_MASTER_CACHE_CPU_GB"
+echo "Master cache GPU GB      : $MUSETALK_CUDA_MASTER_CACHE_GPU_GB"
+
 PYTHON="${CUDA_WORKER_PYTHON:-$ROOT/.venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
   echo "Worker Python not found: $PYTHON" >&2
