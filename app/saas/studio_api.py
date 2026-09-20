@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from .domain import RenderJob
+from .media_cues import validate_media_cue_definitions
 from .models import Asset, Avatar, ConsentRecord, Course, RenderJobRecord, VoiceProfile
 from .queue import job_queue
 from .security import Principal, get_principal, require_admin
@@ -505,6 +506,28 @@ def render_course(
         raise HTTPException(status_code=422, detail="Select a voice profile or provide an audio asset")
 
     script = json.loads(course.script_json or "[]")
+    if isinstance(script, list):
+        for position, raw in enumerate(script, start=1):
+            if not isinstance(raw, dict):
+                continue
+            slide_index = int(raw.get("index") or position)
+            narration = str(raw.get("narration") or raw.get("script") or "").strip()
+            cues = raw.get("media_cues") if isinstance(raw.get("media_cues"), list) else []
+            cue_issues = validate_media_cue_definitions(cues, narration=narration)
+            if cue_issues:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"第 {slide_index} 页内容镜头需要处理：" + "；".join(cue_issues),
+                )
+            for cue in cues:
+                if not isinstance(cue, dict):
+                    continue
+                cue_asset_id = str(cue.get("asset_id") or "")
+                cue_asset = _tenant_asset(db, principal.tenant_id, cue_asset_id) if cue_asset_id else None
+                if cue_asset is None or cue_asset.status != "ready":
+                    raise HTTPException(status_code=422, detail=f"第 {slide_index} 页内容镜头素材不可用")
+                if cue_asset.kind not in {"video", "image", "background"}:
+                    raise HTTPException(status_code=422, detail=f"第 {slide_index} 页内容镜头素材类型不支持")
     plan = plan_for_tenant(db, principal.tenant_id)
     server_estimate = estimate_script_seconds(script, fallback=saas_settings.default_render_estimate_seconds)
     reserved_seconds = max(server_estimate, int(body.estimated_seconds))
