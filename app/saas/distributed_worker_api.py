@@ -34,6 +34,7 @@ from .distributed_scheduler import (
     renew_lease,
     report_progress,
 )
+from .media_cues import media_cue_asset_ids
 from .models import Asset, RenderJobRecord
 from .render_snapshot_models import RenderTaskSnapshot
 from .security import Principal, require_admin
@@ -481,12 +482,17 @@ def _allowed_asset_ids(db: Session, task: RenderSubtask) -> set[str]:
         page.get("preview_audio_asset_id"),
         page.get("background_asset_id"),
     ]
+    page_items.extend(sorted(media_cue_asset_ids(page.get("media_cues"))))
     payload = _json(task.payload_json, {})
     if isinstance(payload, dict):
         page_items.extend(
             payload.get(key)
             for key in ("audio_asset_id", "background_asset_id", "master_video_asset_id", "reference_audio_asset_id", "alpha_asset_id")
         )
+        page_items.extend(sorted(media_cue_asset_ids(payload.get("media_cues"))))
+        override = payload.get("override")
+        if isinstance(override, dict):
+            page_items.extend(sorted(media_cue_asset_ids(override.get("media_cues"))))
     return {str(value) for value in (*common, *page_items) if value}
 
 
