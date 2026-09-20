@@ -43,10 +43,7 @@ JS = r'''
   async function privateBlob(path,key){
     if(!path)return '';
     if(state.blobUrls.has(key))return state.blobUrls.get(key);
-    const url=path.startsWith('/api/')?path:(API+path);
-    const r=await nativeFetch(url,{headers:{Authorization:'Bearer '+token}});
-    if(!r.ok)throw Error('数字人预览素材加载失败');
-    const objectUrl=URL.createObjectURL(await r.blob());state.blobUrls.set(key,objectUrl);return objectUrl;
+    const url=await assetMediaUrl(path);state.blobUrls.set(key,url);return url;
   }
 
   function card(a,selected){

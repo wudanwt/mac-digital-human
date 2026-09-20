@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -10,23 +9,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     set -eux; \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; \
     apt-get \
       -o Acquire::Retries=10 \
       -o Acquire::https::Timeout=60 \
       -o Acquire::http::Timeout=60 \
       -o Acquire::http::Pipeline-Depth=0 \
       update; \
-    apt-get \
-      -o Acquire::Retries=10 \
-      -o Acquire::https::Timeout=60 \
-      -o Acquire::http::Timeout=60 \
-      -o Acquire::http::Pipeline-Depth=0 \
-      install -y --no-install-recommends \
-        ffmpeg \
-        libreoffice-impress \
-        fonts-noto-cjk \
-        curl
+      apt-get \
+        -o Acquire::Retries=10 \
+        -o Acquire::https::Timeout=60 \
+        -o Acquire::http::Timeout=60 \
+        -o Acquire::http::Pipeline-Depth=0 \
+        install -y --no-install-recommends \
+          ffmpeg \
+          libreoffice-impress \
+          fonts-noto-cjk \
+          curl
 
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
@@ -36,9 +36,9 @@ COPY pyproject.toml /app/pyproject.toml
 # code edits do not invalidate this comparatively expensive layer.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     set -eux; \
-    python -m pip install --upgrade pip hatchling; \
+    python -m pip install -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com --upgrade pip hatchling; \
     python -c "import pathlib, tomllib; data = tomllib.load(open('/app/pyproject.toml', 'rb')); deps = data['project']['dependencies'] + data['project']['optional-dependencies']['saas']; pathlib.Path('/tmp/requirements-saas.txt').write_text('\\n'.join(deps) + '\\n')"; \
-    python -m pip install -r /tmp/requirements-saas.txt; \
+    python -m pip install -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r /tmp/requirements-saas.txt; \
     rm /tmp/requirements-saas.txt
 
 COPY alembic.ini /app/alembic.ini

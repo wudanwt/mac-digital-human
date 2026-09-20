@@ -23,8 +23,7 @@ JS = r'''
 
   async function previewOutput(assetId,title){
     try{
-      const r=await fetch(API+'/assets/'+assetId+'/download',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error('成片预览失败');
-      const url=URL.createObjectURL(await r.blob());
+      const url=await assetMediaUrl('/assets/'+assetId+'/download');
       openModal(`<div class="modal-head"><div><div class="eyebrow">OUTPUT PREVIEW</div><h2>${esc(title||'成片预览')}</h2></div><button class="iconbtn" data-close>×</button></div><video src="${url}" controls autoplay style="width:100%;max-height:70vh;background:#000;border-radius:14px"></video>`);
       $('modalRoot').querySelector('[data-close]').onclick=()=>{URL.revokeObjectURL(url);closeModal()};
     }catch(e){toast(e.message)}

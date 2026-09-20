@@ -21,8 +21,7 @@ JS = r'''
   function roleCanAdmin(){return Boolean(me?.user?.is_superuser)||['owner','admin'].includes(me?.workspace?.role)}
   function cleanupUrls(){state.urls.splice(0).forEach(u=>URL.revokeObjectURL(u))}
   async function blobUrl(path){
-    const url=path.startsWith('/api/')?path:(API+path);const r=await nativeFetch(url,{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error('透明资产预览加载失败');
-    const u=URL.createObjectURL(await r.blob());state.urls.push(u);return u;
+    return assetMediaUrl(path,u=>state.urls.push(u));
   }
 
   window.fetch=async function(input,init={}){

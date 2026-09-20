@@ -73,8 +73,7 @@ JS = r'''
 
   async function privateBlob(path,key){
     if(upgrade.blobUrls.has(key))return upgrade.blobUrls.get(key);
-    const url=path.startsWith('/api/')?path:(API+path),r=await nativeFetch(url,{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error('预览素材加载失败');
-    const objectUrl=URL.createObjectURL(await r.blob());upgrade.blobUrls.set(key,objectUrl);return objectUrl;
+    const objectUrl=await assetMediaUrl(path);upgrade.blobUrls.set(key,objectUrl);return objectUrl;
   }
   async function themes(){if(!upgrade.themes)upgrade.themes=await api('/course-tools/backgrounds');return upgrade.themes}
 
@@ -131,7 +130,7 @@ JS = r'''
   }
 
   function setActiveBackgroundControls(){
-    const state=bgState();document.querySelectorAll('[data-upgrade-bg-mode]').forEach(x=>x.classList.toggle('active',x.dataset.upgradeBgMode===state.mode));document.querySelectorAll('[data-upgrade-bg-theme]').forEach(x=>x.classList.toggle('active',state.mode==='builtin'&&(x.dataset.upgradeBgTheme===state.theme_id||x.dataset.filename===state.custom_bg)));
+    const state=bgState();document.querySelectorAll('[data-upgrade-bg-mode]').forEach(x=>x.classList.toggle('active',x.dataset.upgradeBgMode===state.mode));document.querySelectorAll('[data-upgrade-bg-theme]').forEach(x=>x.classList.toggle('active',state.mode==='builtin'&&(x.dataset.upgradeBgTheme===state.theme_id||x.dataset.filename===state.custom_bg)));document.querySelectorAll('[data-upgrade-bg-asset]').forEach(x=>x.classList.toggle('active',state.mode==='asset'&&x.dataset.upgradeBgAsset===state.background_asset_id));
     const current=document.getElementById('studioBgCurrent');if(current){if(state.mode==='dark')current.textContent='当前：深色科技背景';else if(state.mode==='blur')current.textContent='当前：PPT 模糊延展';else if(state.mode==='builtin')current.textContent='当前：'+(document.querySelector('[data-upgrade-bg-theme].active span')?.textContent||'内置背景');else{const a=cache.assets.find(x=>x.id===state.background_asset_id);current.textContent='当前：'+(a?.name||'自定义背景')}}
   }
 
@@ -149,6 +148,7 @@ JS = r'''
       const grid=document.createElement('div');grid.className='studio-bg-grid';
       for(const asset of ownedBackgrounds){
         const button=document.createElement('button');button.type='button';button.className='studio-bg-card';
+        button.dataset.upgradeBgAsset=asset.id;
         const label=document.createElement('span');label.textContent=asset.name;button.appendChild(label);
         button.onclick=()=>{const ext=(asset.name.match(/\.[^.]+$/)||['.png'])[0].toLowerCase();chooseBackground({mode:'asset',custom_bg:`asset-${asset.id}${ext}`,background_asset_id:asset.id,bg_blur:false})};
         grid.appendChild(button);

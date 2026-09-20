@@ -1,0 +1,14 @@
+# macOS AppleDouble sidecar files are binary metadata, not Python modules.
+# Alembic scans migrations/versions/*.py, so including ._*.py breaks startup.
+._*
+**/._*
+.DS_Store
+**/.DS_Store
+
+# Local state and credentials must not enter a production image.
+.git
+.venv
+workspace
+outputs
+.env
+.env.*

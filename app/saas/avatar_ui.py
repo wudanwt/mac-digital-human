@@ -31,11 +31,7 @@ JS = r'''
   }
 
   async function dhBlobUrl(assetId) {
-    const r = await fetch(API + '/assets/' + assetId + '/download', {headers:{Authorization:'Bearer ' + token}});
-    if (!r.ok) throw new Error('素材预览失败');
-    const url = URL.createObjectURL(await r.blob());
-    dhState.previewUrls.push(url);
-    return url;
+    return assetMediaUrl('/assets/' + assetId + '/download', url => dhState.previewUrls.push(url));
   }
 
   function dhCleanupUrls() {

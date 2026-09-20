@@ -205,6 +205,58 @@ class _SceneForegroundRecovery:
         return np.maximum(portrait_mask, self._recovered_alpha)
 
 
+class _EnclosedForegroundRecovery:
+    """Keep a pale podium panel enclosed by its opaque top, sides, and base.
+
+    Portrait models can segment the podium outline while dropping a white center
+    against a white backdrop. Only a large, closed hole in the lower center is
+    eligible; open background gaps (for example between arms or legs) stay clear.
+    """
+
+    def __init__(self, first_mask) -> None:
+        import cv2
+        import numpy as np
+
+        self.enabled = False
+        self.recovered_ratio = 0.0
+        self._fill = None
+        height, width = first_mask.shape[:2]
+        if height < 128 or width < 128:
+            return
+        solid = (first_mask > 224).astype(np.uint8)
+        solid = cv2.morphologyEx(solid, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        outside = solid.copy()
+        cv2.floodFill(outside, np.zeros((height + 2, width + 2), np.uint8), (0, 0), 2)
+        count, labels, stats, _ = cv2.connectedComponentsWithStats((outside == 0).astype(np.uint8), 8)
+        selected = np.zeros((height, width), np.uint8)
+        for label in range(1, count):
+            x, y, w, h, area = (int(value) for value in stats[label])
+            center = (x + w / 2) / width
+            if (
+                0.008 * height * width <= area <= 0.15 * height * width
+                and y > 0.5 * height
+                and h > 0.1 * height
+                and w > 0.08 * width
+                and 0.35 <= center <= 0.65
+            ):
+                selected[labels == label] = 255
+        if not selected.any():
+            return
+        # Include the translucent inner edge of the outline without reaching
+        # beyond the podium rails (about two percent of frame width per side).
+        half_width = max(3, min(20, round(width * 0.02)))
+        self._fill = cv2.dilate(selected, np.ones((5, half_width * 2 + 1), np.uint8))
+        self.recovered_ratio = float(selected.mean() / 255.0)
+        self.enabled = True
+
+    def apply(self, portrait_mask):
+        import numpy as np
+
+        if not self.enabled:
+            return portrait_mask
+        return np.maximum(portrait_mask, self._fill)
+
+
 @dataclass(frozen=True)
 class MattingResult:
     alpha_video: Path
@@ -220,6 +272,7 @@ class MattingResult:
     foreground_recovered_ratio: float
     green_screen: bool
     elapsed_seconds: float
+    enclosed_foreground_recovered_ratio: float = 0.0
 
 
 class PortraitMattingEngine:
@@ -412,6 +465,7 @@ class PortraitMattingEngine:
 
         previous: np.ndarray | None = None
         foreground_recovery: _SceneForegroundRecovery | None = None
+        enclosed_recovery: _EnclosedForegroundRecovery | None = None
         green_screen: bool | None = None
         frame_count = 0
         poster_written = False
@@ -434,6 +488,10 @@ class PortraitMattingEngine:
                     )
                 if foreground_recovery is not None:
                     mask = foreground_recovery.apply(rgb, mask)
+                if enclosed_recovery is None and self.preserve_scene_foreground:
+                    enclosed_recovery = _EnclosedForegroundRecovery(mask)
+                if enclosed_recovery is not None:
+                    mask = enclosed_recovery.apply(mask)
 
                 if self.edge_blur > 0:
                     sigma = self.edge_blur
@@ -503,4 +561,7 @@ class PortraitMattingEngine:
             foreground_recovered_ratio=foreground_recovery.recovered_ratio if foreground_recovery else 0.0,
             green_screen=bool(green_screen),
             elapsed_seconds=time.time() - started,
+            enclosed_foreground_recovered_ratio=(
+                enclosed_recovery.recovered_ratio if enclosed_recovery else 0.0
+            ),
         )

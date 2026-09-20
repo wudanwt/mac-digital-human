@@ -40,10 +40,7 @@ JS = r'''
 
   function cleanupBlobUrls(){studioBlobUrls.forEach(u=>URL.revokeObjectURL(u));studioBlobUrls=[]}
   async function authBlobUrl(path){
-    const url=path.startsWith('/api/')?path:(API+path);
-    const r=await fetch(url,{headers:{Authorization:'Bearer '+token}});
-    if(!r.ok)throw Error('预览素材加载失败');
-    const u=URL.createObjectURL(await r.blob());studioBlobUrls.push(u);return u;
+    return assetMediaUrl(path,u=>studioBlobUrls.push(u));
   }
   async function loadAuthImg(el,path){if(!el||!path)return;try{el.src=await authBlobUrl(path)}catch(_){}}
 

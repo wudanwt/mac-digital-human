@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from .database import get_db
 from .models import SystemAssetTemplate
@@ -54,13 +58,22 @@ def system_asset_preview(
     if descriptor is None:
         raise HTTPException(status_code=404, detail="Preview not available")
     key = descriptor["key"]
-    signed = object_store.signed_get_url(key)
-    if signed:
-        return RedirectResponse(signed, status_code=307)
     path = object_store.local_path(key)
-    if path is None or not path.exists():
+    background = None
+    if path is None:
+        suffix = Path(descriptor.get("name") or key).suffix or ".bin"
+        fd, temp_name = tempfile.mkstemp(prefix="saas-system-preview-", suffix=suffix)
+        os.close(fd)
+        path = Path(temp_name)
+        try:
+            object_store.materialize(key, path)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        background = BackgroundTask(path.unlink, missing_ok=True)
+    if not path.exists():
         raise HTTPException(status_code=404, detail="Preview bytes not found")
-    return FileResponse(path, media_type=descriptor["content_type"])
+    return FileResponse(path, media_type=descriptor["content_type"], background=background)
 
 
 @router.post("/{template_id}/import")

@@ -108,7 +108,7 @@ def prepare_course(
     """Prepare only deterministic deck artifacts; no model inference happens here."""
 
     deck = PresentationParser.parse(ppt_path)
-    PPTRenderer.render_deck(deck, workspace.slide_dir)
+    PPTRenderer.render_deck(deck, workspace.slide_dir, require_authentic=True)
     plans = build_page_plans(deck, script_entries, settings_payload)
     return PreparedCourse(
         workspace=workspace,
@@ -232,6 +232,8 @@ def finalize_course(
     prepared: PreparedCourse,
     results: list[PageRenderResult],
     composer,
+    prevalidated_clips: bool = False,
+    ai_badge_path: Path | None = None,
 ) -> Path:
     """Concatenate validated page segments and generate the final subtitle timeline."""
 
@@ -245,7 +247,12 @@ def finalize_course(
 
     work = prepared.workspace.root
     raw_output = work / "course.mp4"
-    composer.concat([item.segment_path for item in ordered], raw_output, work / "concat")
+    composer.concat(
+        [item.segment_path for item in ordered],
+        raw_output,
+        work / "concat",
+        prevalidated=prevalidated_clips,
+    )
 
     subtitle_items: list[SubtitleItem] = []
     cursor = 0.0
@@ -272,6 +279,8 @@ def finalize_course(
     if show_subtitles and subtitle_items:
         if subtitle_mode == "soft":
             composer.embed_subtitles(raw_output, srt, output)
+            if ai_badge_path is not None:
+                return composer.overlay_ai_badge(output, ai_badge_path, work / "result-labeled.mp4")
         else:
             composer.burn_in_subtitles(
                 video_path=raw_output,
@@ -279,6 +288,9 @@ def finalize_course(
                 output_path=output,
                 font_size=int(settings_payload.get("subtitle_font_size") or 40),
                 margin_bottom=int(settings_payload.get("subtitle_margin_bottom") or 42),
+                ai_badge_path=ai_badge_path,
             )
         return output
+    if ai_badge_path is not None:
+        return composer.overlay_ai_badge(raw_output, ai_badge_path, work / "result-labeled.mp4")
     return raw_output

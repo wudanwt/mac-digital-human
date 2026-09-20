@@ -418,16 +418,27 @@ class CourseComposer:
         # Default fallback
         return self.normalize(avatar_video, target)
 
-    def concat(self, clips: list[Path], output: Path, workdir: Path) -> Path:
-        """Concatenate normalized video segments into a single file."""
+    def concat(
+        self,
+        clips: list[Path],
+        output: Path,
+        workdir: Path,
+        *,
+        prevalidated: bool = False,
+    ) -> Path:
+        """Concatenate segments, skipping transcodes after a verified stream contract."""
         if not clips:
             raise ComposeError("no clips to compose")
-        normalized_dir = workdir / "normalized"
-        normalized_dir.mkdir(parents=True, exist_ok=True)
-        normalized: list[Path] = []
-        for index, clip in enumerate(clips, start=1):
-            target = normalized_dir / f"{index:03d}.mp4"
-            normalized.append(self.normalize(clip, target))
+        workdir.mkdir(parents=True, exist_ok=True)
+        if prevalidated:
+            normalized = clips
+        else:
+            normalized_dir = workdir / "normalized"
+            normalized_dir.mkdir(parents=True, exist_ok=True)
+            normalized = []
+            for index, clip in enumerate(clips, start=1):
+                target = normalized_dir / f"{index:03d}.mp4"
+                normalized.append(self.normalize(clip, target))
 
         concat_file = workdir / "concat.txt"
         concat_file.write_text(
@@ -489,6 +500,7 @@ class CourseComposer:
         output_path: Path,
         font_size: int = 34,
         margin_bottom: int = 40,
+        ai_badge_path: Path | None = None,
     ) -> Path:
         """Burn high-contrast subtitles directly into the video frames using PIL overlay."""
         if not srt_path.exists():
@@ -565,7 +577,17 @@ class CourseComposer:
                 )
                 last_out = next_out
 
+            if ai_badge_path is not None:
+                badge_input = len(inputs) // 2
+                inputs.extend(["-loop", "1", "-framerate", "1", "-i", str(ai_badge_path)])
+                filter_complex_parts.append(
+                    f"[{last_out}][{badge_input}:v]overlay=W-w-24:H-h-24:format=auto[vlabel]"
+                )
+                last_out = "vlabel"
+
             fc_str = ";".join(filter_complex_parts)
+            duration_args = ["-t", f"{media_duration(video_path):.3f}"] if ai_badge_path is not None else []
+            metadata_args = ["-metadata", "comment=AI-generated digital human content"] if ai_badge_path is not None else []
             self._run(
                 [
                     "ffmpeg", "-y",
@@ -575,6 +597,8 @@ class CourseComposer:
                     "-map", "0:a",
                     "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
                     "-c:a", "copy",
+                    *metadata_args,
+                    *duration_args,
                     "-movflags", "+faststart",
                     str(output_path),
                 ]
@@ -582,6 +606,24 @@ class CourseComposer:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+        return output_path
+
+    def overlay_ai_badge(self, video_path: Path, badge_path: Path, output_path: Path) -> Path:
+        """Label a video when there is no burn-in subtitle pass to share."""
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                "-i", str(video_path), "-loop", "1", "-framerate", "1", "-i", str(badge_path),
+                "-filter_complex", "[0:v:0][1:v:0]overlay=W-w-24:H-h-24:format=auto[v]",
+                "-map", "[v]", "-map", "0:a?", "-map", "0:s?",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-c:a", "copy", "-c:s", "copy",
+                "-metadata", "comment=AI-generated digital human content",
+                "-t", f"{media_duration(video_path):.3f}", "-movflags", "+faststart",
+                str(output_path),
+            ]
+        )
         return output_path
 
     def mix_background_music(

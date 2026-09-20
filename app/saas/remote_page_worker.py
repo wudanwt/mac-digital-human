@@ -1189,6 +1189,9 @@ class RemotePageWorker:
                         "backend": result.backend,
                         "foreground_recovery": result.foreground_recovery,
                         "foreground_recovered_ratio": round(result.foreground_recovered_ratio, 4),
+                        "enclosed_foreground_recovered_ratio": round(
+                            getattr(result, "enclosed_foreground_recovered_ratio", 0.0), 4
+                        ),
                         "green_screen": result.green_screen,
                         "elapsed_seconds": round(result.elapsed_seconds, 2),
                         "temporal_smoothing": engine.temporal_smoothing,

@@ -1,0 +1,167 @@
+# Production Compose specification for Synology NAS and remote Mac worker cluster.
+# Adheres strictly to docs/SYNOLOGY_M4_PRODUCTION_DEPLOYMENT.md.
+# Do NOT run worker-mock in production. Storage backend is strictly object storage (MinIO/S3).
+services:
+  postgres:
+    image: postgres:17
+    container_name: mac-digital-human-prod-postgres
+    environment:
+      POSTGRES_DB: ${SAAS_DB_NAME:-digital_human}
+      POSTGRES_USER: ${SAAS_DB_USER:-digital_human}
+      POSTGRES_PASSWORD: ${SAAS_DB_PASSWORD:?SAAS_DB_PASSWORD is required}
+    volumes:
+      - ${SAAS_PROD_POSTGRES_DIR:-./postgres_data}:/var/lib/postgresql/data
+    networks:
+      - saas-prod-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SAAS_DB_USER:-digital_human} -d ${SAAS_DB_NAME:-digital_human}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    container_name: mac-digital-human-prod-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${SAAS_PROD_REDIS_DIR:-./redis_data}:/data
+    networks:
+      - saas-prod-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: mac-digital-human-prod-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:?STORAGE_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required}
+      MINIO_BROWSER_REDIRECT_URL: ${STORAGE_CONSOLE_REDIRECT_URL:-}
+      # Objects remain private; this only lets browsers read time-limited
+      # presigned URLs returned by the authenticated API.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
+    ports:
+      # Use port 9005 by default because host 9000 is occupied by Portainer on Synology
+      - "${MINIO_HOST_PORT:-9005}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9006}:9001"
+    volumes:
+      - ${SAAS_PROD_MINIO_DIR:-./minio_data}:/data
+    networks:
+      - saas-prod-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: mac-digital-human-prod-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - saas-prod-net
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        mc alias set localminio http://minio:9000 "$$STORAGE_ACCESS_KEY" "$$STORAGE_SECRET_KEY"
+        mc mb --ignore-existing localminio/"$$STORAGE_BUCKET"
+        mc anonymous set none localminio/"$$STORAGE_BUCKET"
+        echo "MinIO private bucket $$STORAGE_BUCKET is verified."
+    environment:
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-digital-human}
+
+  api:
+    image: mac-digital-human-api:prod
+    container_name: mac-digital-human-prod-api
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SAAS_DB_USER:-digital_human}:${SAAS_DB_PASSWORD}@postgres:5432/${SAAS_DB_NAME:-digital_human}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: minio
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-http://minio:9000}
+      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-digital-human}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.saas_main:app --host 0.0.0.0 --port 8918 --proxy-headers --forwarded-allow-ips='*'"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${SAAS_API_HOST_PORT:-8918}:8918"
+    volumes:
+      - ${SAAS_SHARED_WORKSPACE_DIR:-./workspace}:/app/workspace
+      - ${SAAS_SHARED_OUTPUTS_DIR:-./outputs}:/app/outputs
+    networks:
+      - saas-prod-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8918/api/saas/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  distributed-center:
+    image: mac-digital-human-api:prod
+    container_name: mac-digital-human-prod-center
+    build:
+      context: .
+      dockerfile: Dockerfile.saas-api
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SAAS_DB_USER:-digital_human}:${SAAS_DB_PASSWORD}@postgres:5432/${SAAS_DB_NAME:-digital_human}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_BACKEND: redis
+      STORAGE_BACKEND: minio
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-http://minio:9000}
+      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-digital-human}
+    command: ["python", "-m", "app.saas.distributed_center"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ${SAAS_SHARED_WORKSPACE_DIR:-./workspace}:/app/workspace
+      - ${SAAS_SHARED_OUTPUTS_DIR:-./outputs}:/app/outputs
+    # This process has no HTTP listener; the API image's inherited HTTP
+    # healthcheck would otherwise mark a running scheduler unhealthy.
+    healthcheck:
+      disable: true
+    networks:
+      - saas-prod-net
+    restart: unless-stopped
+
+networks:
+  saas-prod-net:
+    name: mac-digital-human-prod-net
+    driver: bridge

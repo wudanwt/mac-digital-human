@@ -65,6 +65,11 @@ def test_full_saas_control_plane_flow_and_tenant_isolation() -> None:
         token, _ = _register(client, "studio")
         ppt, video, audio = _studio_assets(client, token)
 
+        preview = client.get(f"/api/saas/assets/{ppt['id']}/content", headers=_headers(token))
+        assert preview.status_code == 200, preview.text
+        assert preview.content == b"fake-ppt"
+        assert preview.headers["content-disposition"].startswith("inline;")
+
         no_consent = client.post(
             "/api/saas/voices",
             headers=_headers(token),
@@ -148,6 +153,10 @@ def test_full_saas_control_plane_flow_and_tenant_isolation() -> None:
         other_token, _ = _register(client, "isolated")
         forbidden_asset = client.get(f"/api/saas/assets/{ppt['id']}", headers=_headers(other_token))
         assert forbidden_asset.status_code == 404
+        forbidden_preview = client.get(
+            f"/api/saas/assets/{ppt['id']}/content", headers=_headers(other_token)
+        )
+        assert forbidden_preview.status_code == 404
         forbidden_course = client.get(f"/api/saas/courses/{course['id']}", headers=_headers(other_token))
         assert forbidden_course.status_code == 404
 

@@ -42,8 +42,14 @@ def test_job_detail_javascript_consumes_distributed_tasks() -> None:
     assert "etaSeconds(d,elapsed)" in JS
     assert "data-job-video-preview" in JS
     assert "hydrateResultVideo" in JS
-    assert "Authorization:'Bearer '+token" in JS
+    assert "assetMediaUrl('/assets/'+assetId+'/download')" in JS
     assert "预计剩余时间" in JS
+
+
+def test_download_does_not_fetch_blob_url() -> None:
+    web = (ROOT / "app" / "saas" / "web.py").read_text(encoding="utf-8")
+    assert "fetch(API+'/assets/'+encodeURIComponent(id)+'/content'" in web
+    assert "fetch(direct)" not in web
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required to execute job-detail helpers")

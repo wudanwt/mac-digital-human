@@ -77,11 +77,10 @@ def collect(remote_api_base: str | None = None) -> dict:
     except Exception as exc:
         checks["cosyvoice"] = {"ready": False, "error": str(exc)}
 
-    if remote_api_base is None:
-        try:
-            checks["portrait_matting"] = PortraitMattingEngine.readiness()
-        except Exception as exc:
-            checks["portrait_matting"] = {"ready": False, "error": str(exc)}
+    try:
+        checks["portrait_matting"] = PortraitMattingEngine.readiness()
+    except Exception as exc:
+        checks["portrait_matting"] = {"ready": False, "error": str(exc)}
 
     if remote_api_base is None:
         control_plane_ready = bool(
@@ -89,8 +88,6 @@ def collect(remote_api_base: str | None = None) -> dict:
             and checks["redis"] is True
             and isinstance(checks["storage"], dict)
             and checks["storage"].get("ready") is True
-            and isinstance(checks["portrait_matting"], dict)
-            and checks["portrait_matting"].get("ready") is True
         )
     else:
         control_plane_ready = bool(checks["center_api"].get("ready"))
@@ -103,6 +100,8 @@ def collect(remote_api_base: str | None = None) -> dict:
         and checks["musetalk"].get("ready") is True
         and isinstance(checks["cosyvoice"], dict)
         and checks["cosyvoice"].get("ready") is True
+        and isinstance(checks["portrait_matting"], dict)
+        and checks["portrait_matting"].get("ready") is True
     )
     return {"ready": ready, "checks": checks}
 

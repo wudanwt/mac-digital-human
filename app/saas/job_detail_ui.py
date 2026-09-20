@@ -77,9 +77,7 @@ JS = r'''
   async function hydrateResultVideo(assetId){
     const host=document.querySelector('[data-job-video-preview]');if(!host||!assetId)return;
     try{
-      const r=await fetch(API+'/assets/'+assetId+'/download',{headers:{Authorization:'Bearer '+token}});
-      if(!r.ok)throw Error('成片预览加载失败');
-      releaseResultVideo();resultVideoUrl=URL.createObjectURL(await r.blob());
+      releaseResultVideo();resultVideoUrl=await assetMediaUrl('/assets/'+assetId+'/download');
       if(!document.body.contains(host)){releaseResultVideo();return}
       host.innerHTML=`<video controls playsinline preload="metadata" src="${resultVideoUrl}"></video>`;
     }catch(e){host.innerHTML=`<div class="job-preview-loading">${safe(e.message)}</div>`}

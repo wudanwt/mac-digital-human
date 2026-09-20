@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from .database import get_db
 from .models import Asset, Avatar, Course, VoiceProfile
@@ -168,6 +169,43 @@ def get_asset(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     return _serialize(_owned_asset(db, principal.tenant_id, asset_id))
+
+
+@router.get("/{asset_id}/content")
+def get_asset_content(
+    asset_id: str,
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_db)],
+) -> FileResponse:
+    """Serve private media from the API origin for browser previews.
+
+    This avoids cross-origin redirects to Docker-internal hosts or object-store
+    ports that browsers may block. Cloud objects are materialized to a temporary
+    file so FileResponse can stream them and honor byte-range requests.
+    """
+    asset = _owned_asset(db, principal.tenant_id, asset_id)
+    path = object_store.local_path(asset.object_key)
+    background = None
+    if path is None:
+        suffix = Path(asset.name).suffix or ".bin"
+        fd, temp_name = tempfile.mkstemp(prefix="saas-preview-", suffix=suffix)
+        os.close(fd)
+        path = Path(temp_name)
+        try:
+            object_store.materialize(asset.object_key, path)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        background = BackgroundTask(path.unlink, missing_ok=True)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Asset bytes not found")
+    return FileResponse(
+        path,
+        media_type=asset.content_type,
+        filename=asset.name,
+        content_disposition_type="inline",
+        background=background,
+    )
 
 
 @router.get("/{asset_id}/download")

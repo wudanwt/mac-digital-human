@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Sequence
@@ -17,6 +18,8 @@ logger = logging.getLogger("mac_digital_human.ppt.renderer")
 FONT_CANDIDATES = [
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Helvetica.ttc",
 ]
@@ -192,16 +195,36 @@ def _export_pptx_via_libreoffice(pptx_path: Path, temp_work_dir: Path) -> Path |
 
     temp_work_dir.mkdir(parents=True, exist_ok=True)
     try:
-        logger.info(f"Exporting PPTX via LibreOffice: {soffice_cmd}")
-        res = subprocess.run(
-            [soffice_cmd, "--headless", "--convert-to", "pdf", str(pptx_path.resolve()), "--outdir", str(temp_work_dir)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        # API preview requests and the render center may export concurrently.
+        # A shared LibreOffice profile serializes those processes and can make a
+        # perfectly valid deck exceed the old 30-second timeout.
+        with tempfile.TemporaryDirectory(prefix="lo-profile-", dir=temp_work_dir) as profile_dir:
+            profile_url = Path(profile_dir).resolve().as_uri()
+            logger.info("Exporting PPTX via LibreOffice: %s", soffice_cmd)
+            res = subprocess.run(
+                [
+                    soffice_cmd,
+                    f"-env:UserInstallation={profile_url}",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(temp_work_dir),
+                    str(pptx_path.resolve()),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
         expected_pdf = temp_work_dir / f"{pptx_path.stem}.pdf"
-        if res.returncode == 0 and expected_pdf.exists():
+        if res.returncode == 0 and expected_pdf.exists() and expected_pdf.stat().st_size > 0:
             return expected_pdf
+        logger.warning(
+            "LibreOffice export failed (code %s): %s %s",
+            res.returncode,
+            res.stdout.strip(),
+            res.stderr.strip(),
+        )
     except Exception as exc:
         logger.warning(f"LibreOffice conversion failed: {exc}")
     return None
@@ -248,6 +271,7 @@ class PPTRenderer:
         output_dir: str | Path,
         width: int = 1920,
         height: int = 1080,
+        require_authentic: bool = False,
     ) -> list[Path]:
         """Renders authentic 1920x1080 slide images for all slides in the deck."""
         out = Path(output_dir).resolve()
@@ -264,19 +288,30 @@ class PPTRenderer:
             logger.info(f"Found companion PDF: {companion_pdf.name}, rendering authentic full slide images...")
             return cls._render_pdf_pages_to_images(companion_pdf, deck.slides, out, deck.title, deck.total_slides, width, height)
 
+        def render_exported_pdf(pdf_path: Path) -> list[Path]:
+            if require_authentic:
+                with pymupdf.open(str(pdf_path)) as pdf:
+                    if len(pdf) != deck.total_slides:
+                        raise RuntimeError(
+                            f"Exported slide count {len(pdf)} does not match source slide count {deck.total_slides}"
+                        )
+            return cls._render_pdf_pages_to_images(pdf_path, deck.slides, out, deck.title, deck.total_slides, width, height)
+
         # Strategy 3: Export authentic visual slides via PowerPoint automation on macOS
         exported_pdf = _export_pptx_via_powerpoint(deck.source_file, out)
         if exported_pdf and exported_pdf.exists():
             logger.info("Successfully extracted full visual slides via PowerPoint export.")
-            return cls._render_pdf_pages_to_images(exported_pdf, deck.slides, out, deck.title, deck.total_slides, width, height)
+            return render_exported_pdf(exported_pdf)
 
         # Strategy 4: LibreOffice headless export fallback
         lo_pdf = _export_pptx_via_libreoffice(deck.source_file, out)
         if lo_pdf and lo_pdf.exists():
             logger.info("Successfully extracted full visual slides via LibreOffice export.")
-            return cls._render_pdf_pages_to_images(lo_pdf, deck.slides, out, deck.title, deck.total_slides, width, height)
+            return render_exported_pdf(lo_pdf)
 
         # Strategy 5: Safety Fallback to synthetic modern Canvas card
+        if require_authentic:
+            raise RuntimeError("Could not export authentic PPT slides; refusing to replace them with synthetic cards")
         logger.warning("No office/PDF renderer available. Falling back to synthetic modern Canvas cards.")
         rendered_paths: list[Path] = []
         for slide in deck.slides:
@@ -287,4 +322,3 @@ class PPTRenderer:
             rendered_paths.append(target)
 
         return rendered_paths
-

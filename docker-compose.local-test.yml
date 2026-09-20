@@ -1,0 +1,12 @@
+# Fast local test overlay: keep the existing database/image dependencies and
+# load the current checkout's application code into the API and render center.
+services:
+  api:
+    volumes:
+      - ./app:/app/app:ro
+      - ./migrations:/app/migrations:ro
+
+  distributed-center:
+    volumes:
+      - ./app:/app/app:ro
+      - ./migrations:/app/migrations:ro

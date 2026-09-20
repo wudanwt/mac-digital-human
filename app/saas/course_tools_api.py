@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from ..ppt import PresentationParser, PPTRenderer
 from .database import get_db
@@ -97,7 +99,9 @@ def _render_previews(asset: Asset, tenant_id: str) -> tuple[object, list[Path]]:
     local = root / f"course{suffix}"
     object_store.materialize(asset.object_key, local)
     deck = PresentationParser.parse(local)
-    rendered = PPTRenderer.render_deck(deck, root / "slides", width=1280, height=720)
+    rendered = PPTRenderer.render_deck(
+        deck, root / "slides", width=1280, height=720, require_authentic=True
+    )
     for index, image in enumerate(rendered, start=1):
         object_store.put_file(image, _preview_key(tenant_id, asset.id, index))
     # The TemporaryDirectory must stay alive until callers have consumed metadata.
@@ -154,11 +158,8 @@ def ppt_thumbnail(
     if slide_index < 1:
         raise HTTPException(status_code=404, detail="Slide not found")
     key = _preview_key(principal.tenant_id, asset_id, slide_index)
-    signed = object_store.signed_get_url(key)
-    if signed:
-        return RedirectResponse(signed, status_code=307)
     path = object_store.local_path(key)
-    if path is None or not path.exists():
+    if (path is None and object_store.object_size(key) is None) or (path is not None and not path.exists()):
         try:
             deck, _ = _render_previews(asset, principal.tenant_id)
         except Exception as exc:
@@ -166,9 +167,26 @@ def ppt_thumbnail(
         if slide_index > deck.total_slides:
             raise HTTPException(status_code=404, detail="Slide not found")
         path = object_store.local_path(key)
-    if path is None or not path.exists():
+    background = None
+    if path is None:
+        fd, temp_name = tempfile.mkstemp(prefix="saas-slide-preview-", suffix=".png")
+        os.close(fd)
+        path = Path(temp_name)
+        try:
+            object_store.materialize(key, path)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        background = BackgroundTask(path.unlink, missing_ok=True)
+    if not path.exists():
         raise HTTPException(status_code=404, detail="Slide preview bytes not found")
-    return FileResponse(path, media_type="image/png", filename=f"slide_{slide_index:03d}.png")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=f"slide_{slide_index:03d}.png",
+        content_disposition_type="inline",
+        background=background,
+    )
 
 
 @router.post("/courses/{course_id}/speech-previews", status_code=202)

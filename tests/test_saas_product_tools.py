@@ -153,6 +153,8 @@ def test_theme_and_course_studio_assets_are_served() -> None:
         assert studio_upgrade_js.status_code == 200
         assert "上传自定义背景" in studio_upgrade_js.text
         assert "master_video_asset_id" in studio_upgrade_js.text
+        assert "assetMediaUrl(path)" in studio_upgrade_js.text
+        assert "data-upgrade-bg-asset" in studio_upgrade_js.text
         assert page.status_code == 200
         assert "/saas-theme.css" in page.text
         assert "/course-studio.css" in page.text

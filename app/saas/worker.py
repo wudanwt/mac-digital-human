@@ -86,14 +86,10 @@ def _preferred_h264_encoder() -> str:
     return "libx264"
 
 
-def _apply_ai_label(source: Path) -> Path:
-    """Apply a visible AI badge without relying on FFmpeg's optional drawtext filter."""
-    if not saas_settings.require_ai_label:
-        return source
-
+def _create_ai_label_badge(source: Path) -> Path:
+    """Build the badge once so it can share a subtitle-encoding pass."""
     from PIL import Image, ImageDraw, ImageFont
 
-    target = source.with_name(f"{source.stem}-labeled{source.suffix}")
     badge = source.with_name("ai-generated-badge.png")
     text = saas_settings.ai_label_text.strip() or "AI生成"
     font_path = _font_file()
@@ -116,6 +112,16 @@ def _apply_ai_label(source: Path) -> Path:
     )
     card_draw.text((14, 9 - bbox[1]), text, font=font, fill=(255, 255, 255, 232))
     card.save(badge)
+    return badge
+
+
+def _apply_ai_label(source: Path) -> Path:
+    """Apply a visible AI badge without relying on FFmpeg's optional drawtext filter."""
+    if not saas_settings.require_ai_label:
+        return source
+
+    target = source.with_name(f"{source.stem}-labeled{source.suffix}")
+    badge = _create_ai_label_badge(source)
 
     duration = media_duration(source)
     encoder = _preferred_h264_encoder()

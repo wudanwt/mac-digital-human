@@ -4,6 +4,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import BinaryIO, Protocol
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from .settings import saas_settings
@@ -122,6 +123,8 @@ class S3ObjectStore:
             "s3",
             endpoint_url=saas_settings.storage_endpoint,
             region_name=saas_settings.storage_region,
+            aws_access_key_id=os.getenv("STORAGE_ACCESS_KEY") or None,
+            aws_secret_access_key=os.getenv("STORAGE_SECRET_KEY") or None,
         )
 
     def put_file(self, source: Path, key: str) -> str:
@@ -142,18 +145,42 @@ class S3ObjectStore:
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
+    @staticmethod
+    def _public_url(signed_url: str) -> str:
+        public_base = (saas_settings.storage_public_base_url or "").strip().rstrip("/")
+        if not public_base:
+            return signed_url
+        public = urlsplit(public_base)
+        signed = urlsplit(signed_url)
+        if public.scheme not in {"http", "https"} or not public.netloc:
+            raise RuntimeError("STORAGE_PUBLIC_BASE_URL must be an absolute HTTP(S) URL")
+        public_prefix = public.path.rstrip("/")
+        return urlunsplit(
+            (
+                public.scheme,
+                public.netloc,
+                f"{public_prefix}{signed.path}",
+                signed.query,
+                signed.fragment,
+            )
+        )
+
     def signed_get_url(self, key: str) -> str | None:
-        return self.client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=saas_settings.storage_signed_url_seconds,
+        return self._public_url(
+            self.client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=saas_settings.storage_signed_url_seconds,
+            )
         )
 
     def signed_put_url(self, key: str) -> str | None:
-        return self.client.generate_presigned_url(
-            "put_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=saas_settings.storage_signed_url_seconds,
+        return self._public_url(
+            self.client.generate_presigned_url(
+                "put_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=saas_settings.storage_signed_url_seconds,
+            )
         )
 
     def object_size(self, key: str) -> int | None:

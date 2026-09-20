@@ -30,7 +30,7 @@ from .render_snapshot_service import load_snapshot_payload
 from .services import enforce_storage_limit, reconcile_render_seconds, refund_render_seconds
 from .settings import saas_settings
 from .storage import object_store
-from .worker import _apply_ai_label
+from .worker import _create_ai_label_badge
 
 log = logging.getLogger("digital-human.saas.distributed-center")
 
@@ -551,8 +551,14 @@ def process_finalize(task_id: str) -> bool:
                 db.commit()
 
         composer = CourseComposer()
-        output = finalize_course(prepared=prepared, results=results, composer=composer)
-        labeled = _apply_ai_label(output)
+        badge = _create_ai_label_badge(work / "course.mp4") if saas_settings.require_ai_label else None
+        labeled = finalize_course(
+            prepared=prepared,
+            results=results,
+            composer=composer,
+            prevalidated_clips=True,
+            ai_badge_path=badge,
+        )
         duration = media_duration(labeled)
         with SessionLocal() as db:
             task = db.get(RenderSubtask, task_id)

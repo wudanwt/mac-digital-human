@@ -71,7 +71,7 @@ JS = r'''
     if(!avatarId)return null;if(!force&&state.matting.has(avatarId))return state.matting.get(avatarId);if(state.loading.has(avatarId))return state.loading.get(avatarId);
     const task=api('/avatar-matting/'+avatarId).then(s=>{state.matting.set(avatarId,s);return s}).catch(()=>null).finally(()=>state.loading.delete(avatarId));state.loading.set(avatarId,task);return task;
   }
-  async function blob(path,key2){if(state.urls.has(key2))return state.urls.get(key2);const r=await nativeFetch(path.startsWith('/api/')?path:(API+path),{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error('透明讲师预览加载失败');const u=URL.createObjectURL(await r.blob());state.urls.set(key2,u);return u}
+  async function blob(path,key2){if(state.urls.has(key2))return state.urls.get(key2);const u=await assetMediaUrl(path);state.urls.set(key2,u);return u}
   function selectedAvatarId(){const select=document.getElementById('studioAvatarSelect');if(select?.value)state.activeAvatar=select.value;return state.activeAvatar}
 
   async function applyPreview(){
