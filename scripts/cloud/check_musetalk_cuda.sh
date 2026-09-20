@@ -37,10 +37,14 @@ required=(
   "$CUDA_VENDOR_DIR/models/musetalkV15/musetalk.json"
   "$CUDA_VENDOR_DIR/models/whisper/pytorch_model.bin"
   "$CUDA_VENDOR_DIR/models/sd-vae/diffusion_pytorch_model.bin"
+  "$CUDA_VENDOR_DIR/models/dwpose/dw-ll_ucoco_384.pth"
+  "$CUDA_VENDOR_DIR/models/face-parse-bisent/79999_iter.pth"
+  "$CUDA_VENDOR_DIR/models/face-parse-bisent/resnet18-5c106cde.pth"
+  "$CUDA_VENDOR_DIR/models/syncnet/latentsync_syncnet.pt"
 )
 failed=0
 for path in "${required[@]}"; do
-  if [ -e "$path" ]; then
+  if [ -s "$path" ]; then
     echo "OK   $path"
   else
     echo "MISS $path"
