@@ -34,6 +34,25 @@ say "Installing CUDA-enabled PyTorch for CosyVoice / matting"
 say "Installing SaaS Worker dependencies"
 "$PY" -m pip install -e '.[saas,matting,cosyvoice]'
 
+say "Pinning CUDA 11.8-compatible NumPy / ONNX Runtime"
+"$PY" -m pip uninstall -y onnxruntime onnxruntime-gpu >/dev/null 2>&1 || true
+"$PY" -m pip install "numpy==1.26.4"
+"$PY" -m pip install "onnxruntime-gpu==1.18.0" \
+  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+
+say "Verifying ONNX Runtime CUDA provider"
+"$PY" - <<'PY'
+import onnxruntime as ort
+providers = ort.get_available_providers()
+print("onnxruntime:", ort.__version__)
+print("providers:", providers)
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit(
+        "CUDAExecutionProvider is unavailable. The Worker would fall back to CPU "
+        "for CosyVoice speech-token extraction, so installation is stopped."
+    )
+PY
+
 say "Preparing portrait matting model"
 "$PY" scripts/setup_matting.py
 
