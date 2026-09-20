@@ -317,6 +317,11 @@ def _task_required_capabilities(task: RenderSubtask) -> set[str]:
     media_cues = payload.get("media_cues")
     if isinstance(media_cues, list) and media_cues:
         required.add("script-media-cues")
+        if any(
+            isinstance(cue, dict) and isinstance(cue.get("overlay_box"), dict)
+            for cue in media_cues
+        ):
+            required.add("script-media-cues-layout-v1")
     return required
 
 
