@@ -66,7 +66,7 @@ SAAS_DISTRIBUTED_RENDER_ENABLED=true
 SAAS_TRUSTED_HOSTS=worker-api.example.com
 SAAS_RENDER_CONTRACT_VERSION=v1
 SAAS_DISTRIBUTED_EXPECTED_CODE_VERSION=0.5.0
-SAAS_DISTRIBUTED_EXPECTED_MODEL_VERSION=musetalk-mlx
+SAAS_DISTRIBUTED_EXPECTED_MODEL_VERSION=musetalk-mlx,musetalk-cuda
 ```
 
 ## 2. 配置私有对象存储
@@ -190,6 +190,23 @@ bash scripts/saas/start_remote_page_worker_mac.sh
 启动后分别发起一次抠像和语音试听，确认 `avatar_matting_jobs` 与 `speech_preview_jobs` 均从 `queued` 到 `succeeded`，对应素材可下载。如果没有任何 Mac/其他计算节点在线，这两类任务仍会排队；群晖容器本身不提供 MuseTalk/MLX 计算能力。
 
 目前辅助任务的结果上传经由 Center 单次 PUT（最大约 2 GB/文件），尚未复用页面视频的可续传上传协议。反向代理需允许相应请求体大小和长时间上传；网络不稳定时租约到期会自动重排，但该文件要重新上传。
+
+## 4.1 Linux NVIDIA CUDA Worker
+
+CUDA Worker 复用同一套公网 Worker API，但不使用 macOS Keychain。Center 管理员先创建 Worker Token：
+
+```bash
+python -m app.saas.manage create-worker --name cuda-worker-01 --slots 1
+```
+
+在 Linux GPU 节点复制 `.env.cuda-worker.example`，设置 HTTPS Center 地址和 `wrk_...` Token，然后执行：
+
+```bash
+bash scripts/cloud/setup_musetalk_cuda.sh
+bash scripts/saas/start_remote_page_worker_cuda.sh
+```
+
+CUDA 节点显式设置 `REMOTE_WORKER_RENDER_BACKEND=cuda`；Mac 节点默认仍为 `mlx`。两类节点共同注册 `musetalk` capability，并额外上报 `backend:cuda` / `backend:mlx`。详细安装、TTS CUDA 校验与验收步骤见 [CUDA_REMOTE_WORKER.md](CUDA_REMOTE_WORKER.md)。
 
 ## 5. 数据传输安全边界
 
