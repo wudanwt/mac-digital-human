@@ -15,6 +15,9 @@ def test_script_media_cue_prototype_is_exposed_in_script_review() -> None:
     assert "openMediaCuePreview" in JS
     assert "QUICK CONTENT-SHOT PREVIEW" in JS
     assert "layoutPreviewMedia" in JS
+    assert "updateMediaCuePreviewButton" in JS
+    assert "runMediaCuePreview" in JS
+    assert "正在准备预览" in JS
 
 
 def test_script_media_cue_ui_describes_automatic_render_timeline() -> None:
