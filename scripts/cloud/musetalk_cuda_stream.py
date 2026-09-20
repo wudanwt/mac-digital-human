@@ -30,7 +30,22 @@ def _ffmpeg_has_encoder(name: str) -> bool:
         text=True,
         check=False,
     )
-    return proc.returncode == 0 and name in (proc.stdout + proc.stderr)
+    if proc.returncode != 0 or name not in (proc.stdout + proc.stderr):
+        return False
+    if name != "h264_nvenc":
+        return True
+    probe = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=black:s=64x64:r=25:d=0.04",
+            "-frames:v", "1", "-c:v", "h264_nvenc",
+            "-f", "null", "-",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return probe.returncode == 0
 
 
 def _encoder_args(requested: str, quality: int) -> tuple[str, list[str]]:
