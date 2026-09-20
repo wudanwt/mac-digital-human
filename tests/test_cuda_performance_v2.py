@@ -9,6 +9,7 @@ from app.engines.musetalk_cuda import MuseTalkCUDAEngine
 def test_video_encoder_default_preserves_existing_software_path(monkeypatch):
     monkeypatch.delenv("VIDEO_ENCODER_BACKEND", raising=False)
     monkeypatch.setattr(video_encoding, "ffmpeg_encoder_available", lambda _name: True)
+    monkeypatch.setattr(video_encoding, "ffmpeg_encoder_usable", lambda _name: True)
     assert video_encoding.resolve_video_encoder() == "libx264"
     args = video_encoding.ffmpeg_video_encode_args(crf=18, software_preset="medium")
     assert args[:2] == ["-c:v", "libx264"]
@@ -19,6 +20,7 @@ def test_video_encoder_auto_uses_nvenc_on_linux(monkeypatch):
     monkeypatch.setenv("VIDEO_ENCODER_BACKEND", "auto")
     monkeypatch.setattr(video_encoding.platform, "system", lambda: "Linux")
     monkeypatch.setattr(video_encoding, "ffmpeg_encoder_available", lambda name: name == "h264_nvenc")
+    monkeypatch.setattr(video_encoding, "ffmpeg_encoder_usable", lambda name: name == "h264_nvenc")
     assert video_encoding.resolve_video_encoder() == "nvenc"
     args = video_encoding.ffmpeg_video_encode_args(crf=18, software_preset="medium")
     assert args[:2] == ["-c:v", "h264_nvenc"]
@@ -29,6 +31,7 @@ def test_video_encoder_nvenc_falls_back_without_encoder(monkeypatch):
     monkeypatch.setenv("VIDEO_ENCODER_BACKEND", "nvenc")
     monkeypatch.delenv("VIDEO_ENCODER_STRICT", raising=False)
     monkeypatch.setattr(video_encoding, "ffmpeg_encoder_available", lambda _name: False)
+    monkeypatch.setattr(video_encoding, "ffmpeg_encoder_usable", lambda _name: False)
     assert video_encoding.resolve_video_encoder() == "libx264"
 
 
