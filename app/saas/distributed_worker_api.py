@@ -376,8 +376,11 @@ def _compatibility_error(body: WorkerRegisterRequest) -> str | None:
     if expected_code and body.code_version != expected_code:
         return f"code version mismatch: {body.code_version or 'missing'} != {expected_code}"
     expected_model = saas_settings.distributed_expected_model_version.strip()
-    if expected_model and body.model_version != expected_model:
-        return f"model version mismatch: {body.model_version or 'missing'} != {expected_model}"
+    if expected_model:
+        accepted_models = {item.strip() for item in expected_model.split(",") if item.strip()}
+        if body.model_version not in accepted_models:
+            expected_label = ",".join(sorted(accepted_models))
+            return f"model version mismatch: {body.model_version or 'missing'} not in {expected_label}"
     if "musetalk" not in {item.strip().lower() for item in body.capabilities}:
         return "worker does not advertise musetalk capability"
     return None
