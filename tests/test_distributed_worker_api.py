@@ -855,6 +855,26 @@ def test_worker_management_metrics_group_and_editing() -> None:
         assert edited.json()["group_name"] == "mac-cluster"
         assert edited.json()["notes"] == "primary production Mac"
 
+        restarted = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={
+                "name": "runtime-name-should-not-win",
+                "host": "managed-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+                "slots_total": 1,
+                "capabilities": ["musetalk"],
+                "versions": {"python": "3.11"},
+                "code_version": "0.5.0",
+                "model_version": "musetalk-mlx",
+                "render_contract_version": saas_settings.render_contract_version,
+            },
+        )
+        assert restarted.status_code == 200, restarted.text
+        assert restarted.json()["worker"]["name"] == "managed-mini-renamed"
+        assert restarted.json()["worker"]["slots_total"] == 2
+
         detail = client.get(
             f"/api/saas/admin/workers/{worker['id']}",
             headers=_headers(token),
