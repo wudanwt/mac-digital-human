@@ -17,9 +17,10 @@ from .base import EngineError, RenderResult
 class MuseTalkCUDAEngine:
     """Official MuseTalk 1.5 PyTorch/CUDA backend for Linux NVIDIA workers.
 
-    This backend intentionally lives beside, not inside, the Apple-Silicon MLX
-    implementation. Remote workers choose the backend explicitly so adding CUDA
-    nodes cannot alter the existing Mac runtime, resident cache, or MLX tuning.
+    The V2 CUDA path keeps the model implementation isolated from the Apple
+    Silicon MLX runtime while replacing MuseTalk's PNG result spool with a
+    rawvideo -> FFmpeg streaming encoder. Set MUSETALK_CUDA_STREAMING=0 to
+    fall back to the untouched upstream inference entrypoint.
     """
 
     name = "musetalk"
@@ -42,6 +43,14 @@ class MuseTalkCUDAEngine:
             "no",
             "off",
         }
+        self.streaming = os.getenv("MUSETALK_CUDA_STREAMING", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        self.video_encoder = os.getenv("MUSETALK_CUDA_VIDEO_ENCODER", "auto").strip() or "auto"
+        self.streaming_runner = settings.root / "scripts" / "cloud" / "musetalk_cuda_stream.py"
 
     def _python_prefix(self) -> list[str]:
         explicit = os.getenv("MUSETALK_CUDA_PYTHON", "").strip()
@@ -109,6 +118,8 @@ class MuseTalkCUDAEngine:
             "vae": (self.repo / "models" / "sd-vae" / "diffusion_pytorch_model.bin").is_file(),
             "python_runtime": bool(self._python_prefix()),
         }
+        if self.streaming:
+            checks["streaming_runner"] = self.streaming_runner.is_file()
         probe = self._cuda_probe() if checks["python_runtime"] else {"ready": False}
         checks["torch_cuda"] = bool(probe.get("ready"))
         return {
@@ -120,13 +131,11 @@ class MuseTalkCUDAEngine:
             "gpu_id": self.gpu_id,
             "batch_size": self.batch_size,
             "float16": self.use_float16,
+            "streaming": self.streaming,
+            "video_encoder": self.video_encoder,
             "checks": checks,
             "cuda": probe,
         }
-
-    @staticmethod
-    def _yaml_string(value: str) -> str:
-        return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
     def _run(cmd: list[str], *, cwd: Path, log_file: Path) -> None:
@@ -141,35 +150,24 @@ class MuseTalkCUDAEngine:
                 check=False,
             )
         if proc.returncode != 0:
-            raise EngineError(f"MuseTalk CUDA command failed ({proc.returncode})")
+            raise EngineError(
+                f"MuseTalk CUDA command failed ({proc.returncode}); inspect {log_file}"
+            )
 
-    def render(
+    @staticmethod
+    def _yaml_string(value: str) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    def _render_upstream(
         self,
+        *,
+        prefix: list[str],
         video: Path,
         audio: Path,
-        variant: str | None = None,
-        output: Path | None = None,
-        job_id: str | None = None,
-        master_cache_key: str | None = None,
-    ) -> RenderResult:
-        status = self.readiness(variant)
-        if not status["ready"]:
-            missing = [name for name, ok in status["checks"].items() if not ok]
-            detail = str((status.get("cuda") or {}).get("error") or "")
-            suffix = f"; {detail}" if detail else ""
-            raise EngineError("MuseTalk CUDA backend is not ready; missing: " + ", ".join(missing) + suffix)
-
-        video = Path(video).resolve()
-        audio = Path(audio).resolve()
-        if not video.is_file():
-            raise EngineError(f"video not found: {video}")
-        if not audio.is_file():
-            raise EngineError(f"audio not found: {audio}")
-
-        job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
-        work = settings.workspace_dir / job_id
-        work.mkdir(parents=True, exist_ok=True)
-        log_file = work / "render.log"
+        work: Path,
+        log_file: Path,
+        final: Path,
+    ) -> dict[str, object]:
         result_root = work / "cuda-results"
         result_root.mkdir(parents=True, exist_ok=True)
         config_path = work / "musetalk-cuda.yaml"
@@ -180,11 +178,6 @@ class MuseTalkCUDAEngine:
             '  result_name: "result.mp4"\n',
             encoding="utf-8",
         )
-
-        final = Path(output).resolve() if output is not None else (settings.outputs_dir / job_id / "result.mp4").resolve()
-        final.parent.mkdir(parents=True, exist_ok=True)
-
-        prefix = self._python_prefix()
         command = [
             *prefix,
             "-m",
@@ -208,8 +201,6 @@ class MuseTalkCUDAEngine:
         ]
         if self.use_float16:
             command.append("--use_float16")
-
-        started = time.time()
         self._run(command, cwd=self.repo, log_file=log_file)
         generated = result_root / "v15" / "result.mp4"
         if not generated.is_file() or generated.stat().st_size <= 0:
@@ -218,6 +209,125 @@ class MuseTalkCUDAEngine:
                 f"inspect {log_file}"
             )
         shutil.copy2(generated, final)
+        return {"pipeline": "upstream-png", "video_encoder": "libx264"}
+
+    def _render_streaming(
+        self,
+        *,
+        prefix: list[str],
+        video: Path,
+        audio: Path,
+        work: Path,
+        log_file: Path,
+        final: Path,
+    ) -> dict[str, object]:
+        metrics_path = work / "cuda-performance.json"
+        command = [
+            *prefix,
+            str(self.streaming_runner),
+            "--musetalk-dir",
+            str(self.repo),
+            "--video",
+            str(video),
+            "--audio",
+            str(audio),
+            "--output",
+            str(final),
+            "--metrics-json",
+            str(metrics_path),
+            "--unet-model-path",
+            str(self.repo / "models" / "musetalkV15" / "unet.pth"),
+            "--unet-config",
+            str(self.repo / "models" / "musetalkV15" / "musetalk.json"),
+            "--whisper-dir",
+            str(self.repo / "models" / "whisper"),
+            "--gpu-id",
+            str(self.gpu_id),
+            "--batch-size",
+            str(self.batch_size),
+            "--video-encoder",
+            self.video_encoder,
+        ]
+        if self.use_float16:
+            command.append("--use-float16")
+        self._run(command, cwd=self.repo, log_file=log_file)
+        if not final.is_file() or final.stat().st_size <= 0:
+            raise EngineError(
+                "MuseTalk CUDA streaming inference returned without a usable result; "
+                f"inspect {log_file}"
+            )
+        timings: dict[str, object] = {}
+        if metrics_path.is_file():
+            try:
+                payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    timings = payload
+            except Exception:
+                timings = {}
+        return {
+            "pipeline": "streaming-v2",
+            "video_encoder": timings.get("video_encoder") or self.video_encoder,
+            "cuda_timings": timings,
+        }
+
+    def render(
+        self,
+        video: Path,
+        audio: Path,
+        variant: str | None = None,
+        output: Path | None = None,
+        job_id: str | None = None,
+        master_cache_key: str | None = None,
+    ) -> RenderResult:
+        status = self.readiness(variant)
+        if not status["ready"]:
+            missing = [name for name, ok in status["checks"].items() if not ok]
+            detail = str((status.get("cuda") or {}).get("error") or "")
+            suffix = f"; {detail}" if detail else ""
+            raise EngineError(
+                "MuseTalk CUDA backend is not ready; missing: "
+                + ", ".join(missing)
+                + suffix
+            )
+
+        video = Path(video).resolve()
+        audio = Path(audio).resolve()
+        if not video.is_file():
+            raise EngineError(f"video not found: {video}")
+        if not audio.is_file():
+            raise EngineError(f"audio not found: {audio}")
+
+        job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+        work = settings.workspace_dir / job_id
+        work.mkdir(parents=True, exist_ok=True)
+        log_file = work / "render.log"
+        final = (
+            Path(output).resolve()
+            if output is not None
+            else (settings.outputs_dir / job_id / "result.mp4").resolve()
+        )
+        final.parent.mkdir(parents=True, exist_ok=True)
+
+        prefix = self._python_prefix()
+        started = time.time()
+        if self.streaming:
+            performance = self._render_streaming(
+                prefix=prefix,
+                video=video,
+                audio=audio,
+                work=work,
+                log_file=log_file,
+                final=final,
+            )
+        else:
+            performance = self._render_upstream(
+                prefix=prefix,
+                video=video,
+                audio=audio,
+                work=work,
+                log_file=log_file,
+                final=final,
+            )
         elapsed = time.time() - started
 
         metadata = {
@@ -232,7 +342,8 @@ class MuseTalkCUDAEngine:
             "batch_size": self.batch_size,
             "float16": self.use_float16,
             "master_cache_key": master_cache_key,
-            "elapsed_seconds": round(elapsed, 2),
+            "elapsed_seconds": round(elapsed, 3),
+            **performance,
         }
         (work / "job.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
