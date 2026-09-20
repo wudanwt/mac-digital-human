@@ -941,4 +941,3 @@ def test_worker_management_metrics_group_and_editing() -> None:
             json={"slots_total": 1},
         )
         assert too_low.status_code == 409
->>>>>>> saas/feat/worker-control-center
