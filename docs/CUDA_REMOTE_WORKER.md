@@ -31,7 +31,7 @@ Target: Ubuntu/Linux + NVIDIA driver + `nvidia-smi` and a bootstrap Python with 
 ```bash
 git clone https://github.com/wudanwt/mac-digital-human-saas.git
 cd mac-digital-human-saas
-git checkout feat/cuda-performance-v2
+git checkout feat/cuda-resident-v3
 
 bash scripts/cloud/setup_musetalk_cuda.sh
 bash scripts/cloud/setup_cuda_worker_runtime.sh
