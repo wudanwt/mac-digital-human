@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import os
 import shutil
@@ -117,7 +116,7 @@ def main() -> int:
     from transformers import WhisperModel
 
     from musetalk.utils.audio_processor import AudioProcessor
-    from musetalk.utils.blending import get_image
+    from musetalk.utils.blending import get_image_blending, get_image_prepare_material
     from musetalk.utils.face_parsing import FaceParsing
     from musetalk.utils.preprocessing import coord_placeholder, get_landmark_and_bbox
     from musetalk.utils.utils import datagen, get_video_fps, load_all_model
@@ -197,11 +196,15 @@ def main() -> int:
 
         stage = _timer()
         input_latent_list = []
+        adjusted_coords = []
         for bbox, frame in zip(coord_list, frame_list):
             if bbox == coord_placeholder:
+                adjusted_coords.append(coord_placeholder)
                 continue
             x1, y1, x2, y2 = [int(v) for v in bbox]
             y2 = min(frame.shape[0], y2 + args.extra_margin)
+            adjusted = [x1, y1, x2, y2]
+            adjusted_coords.append(adjusted)
             crop_frame = frame[y1:y2, x1:x2]
             crop_frame = cv2.resize(crop_frame, (256, 256), interpolation=cv2.INTER_LANCZOS4)
             input_latent_list.append(vae.get_latents_for_unet(crop_frame))
@@ -210,8 +213,24 @@ def main() -> int:
         if not input_latent_list:
             raise RuntimeError("MuseTalk VAE preprocessing produced no usable latents")
 
+        stage = _timer()
+        blend_materials = []
+        for bbox, frame in zip(adjusted_coords, frame_list):
+            if bbox == coord_placeholder:
+                blend_materials.append(None)
+                continue
+            mask_array, crop_box = get_image_prepare_material(
+                frame,
+                bbox,
+                fp=fp,
+                mode=args.parsing_mode,
+            )
+            blend_materials.append((mask_array, crop_box))
+        metrics["blend_material_prepare_seconds"] = round(_timer() - stage, 4)
+
         frame_cycle = frame_list + frame_list[::-1]
-        coord_cycle = coord_list + coord_list[::-1]
+        coord_cycle = adjusted_coords + adjusted_coords[::-1]
+        material_cycle = blend_materials + blend_materials[::-1]
         latent_cycle = input_latent_list + input_latent_list[::-1]
 
         stage = _timer()
@@ -276,12 +295,13 @@ def main() -> int:
         written = 0
         try:
             for i, res_frame in enumerate(tqdm(generated_frames, desc="Blend + stream encode")):
-                bbox = coord_cycle[i % len(coord_cycle)]
-                if bbox == coord_placeholder:
+                cycle_index = i % len(coord_cycle)
+                bbox = coord_cycle[cycle_index]
+                material = material_cycle[cycle_index]
+                if bbox == coord_placeholder or material is None:
                     continue
-                ori_frame = copy.deepcopy(frame_cycle[i % len(frame_cycle)])
+                ori_frame = frame_cycle[cycle_index].copy()
                 x1, y1, x2, y2 = [int(v) for v in bbox]
-                y2 = min(ori_frame.shape[0], y2 + args.extra_margin)
                 if x2 <= x1 or y2 <= y1:
                     continue
                 resized = cv2.resize(
@@ -289,12 +309,13 @@ def main() -> int:
                     (x2 - x1, y2 - y1),
                     interpolation=cv2.INTER_LINEAR,
                 )
-                combined = get_image(
+                mask_array, crop_box = material
+                combined = get_image_blending(
                     ori_frame,
                     resized,
                     [x1, y1, x2, y2],
-                    mode=args.parsing_mode,
-                    fp=fp,
+                    mask_array,
+                    crop_box,
                 )
                 proc.stdin.write(np.ascontiguousarray(combined).tobytes())
                 written += 1
