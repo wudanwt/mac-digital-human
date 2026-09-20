@@ -114,6 +114,56 @@ Per-page metrics now include asset download, TTS, MuseTalk render, base composit
 
 Set `MUSETALK_CUDA_STREAMING=0` to roll back only the MuseTalk output path to the pinned upstream PNG implementation without changing the rest of the Worker.
 
+## CUDA resident V3
+
+V3 keeps the V2 rawvideo/NVENC pipeline and adds a long-lived MuseTalk Python 3.10 runtime behind the Python 3.11 SaaS Worker. The two environments remain isolated; the Worker talks to the resident process over a private JSON-lines pipe.
+
+```text
+Python 3.11 SaaS Worker
+  -> resident control pipe
+     -> Python 3.10 MuseTalk runtime
+        -> UNet / VAE / Whisper / FaceParsing stay loaded
+        -> master cache by master_cache_key
+           -> decoded frames
+           -> face coordinates
+           -> VAE latents
+           -> precomputed blend masks
+        -> rawvideo -> FFmpeg -> NVENC
+```
+
+Default CUDA V3 controls:
+
+```env
+MUSETALK_CUDA_STREAMING=1
+MUSETALK_CUDA_RESIDENT=1
+MUSETALK_CUDA_RESIDENT_FALLBACK=1
+MUSETALK_CUDA_MASTER_CACHE_ITEMS=2
+MUSETALK_CUDA_MASTER_CACHE_CPU_GB=6
+MUSETALK_CUDA_MASTER_CACHE_GPU_GB=4
+MUSETALK_CUDA_RESIDENT_START_TIMEOUT=240
+MUSETALK_CUDA_RESIDENT_REQUEST_TIMEOUT=1800
+```
+
+The first page for a master video is a cache miss and prepares the master. Later pages using the same frozen master asset reuse the cached frames, coordinates, masks and VAE latents. Cache entries are LRU-evicted by both item count and memory budget; the newest entry is retained even if a single large master exceeds a budget.
+
+Per-page CUDA metrics include `master_cache_hit`, `master_prepare_seconds`, cache hit/miss/eviction counters, cache CPU/GPU estimates, resident uptime, and resident model-load time. On a cache hit, source decode, landmark, latent preparation and blend-material preparation report zero for that page.
+
+Rollback is layered:
+
+```env
+# Disable only resident V3; keep V2 streaming + NVENC.
+MUSETALK_CUDA_RESIDENT=0
+
+# Disable streaming V2 too; use the pinned upstream MuseTalk PNG path.
+MUSETALK_CUDA_STREAMING=0
+
+# Keep CUDA inference but force software H.264.
+VIDEO_ENCODER_BACKEND=libx264
+MUSETALK_CUDA_VIDEO_ENCODER=libx264
+```
+
+If the resident process crashes or a resident render fails, `MUSETALK_CUDA_RESIDENT_FALLBACK=1` stops the resident process and automatically retries that page through the V2 streaming path.
+
 ## Current CUDA behavior
 
 - MuseTalk: official MuseTalk 1.5 PyTorch/CUDA model stack with the V2 streaming output adapter.
@@ -122,7 +172,7 @@ Set `MUSETALK_CUDA_STREAMING=0` to roll back only the MuseTalk output path to th
 - Page lease / heartbeat / downloads / uploads: same protocol as Mac Remote Worker.
 - Portrait matting: PyTorch CUDA FP16 when available; transparent composition shares the same page contract.
 - MuseTalk MLX resident runtime and Apple cache tuning are untouched.
-- CUDA resident-model and master-cache optimization remains a separate next phase.
+- CUDA V3 keeps the MuseTalk model process resident and reuses master frames/bbox/masks/latents across pages.
 
 ## Production rollout
 
