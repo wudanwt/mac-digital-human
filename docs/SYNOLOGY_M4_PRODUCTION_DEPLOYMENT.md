@@ -1,8 +1,8 @@
 # 群晖 + 双 Mac mini M4 数字人 SaaS 生产部署方案
 
-> 文档状态：部署架构资产 / 生产化实施基线  
-> 适用仓库：`wudanwt/mac-digital-human-saas`  
-> 基线分支：`feat/remote-worker-enrollment-v3`  
+> 文档状态：部署架构资产 / 生产化实施基线
+> 适用仓库：`wudanwt/mac-digital-human-saas`
+> 基线分支：`feat/remote-worker-enrollment-v3`
 > 目标环境：自有公网 IP + 自有域名 + 群晖 NAS + 2 台 Mac mini M4（16GB / 256GB）
 
 ---
