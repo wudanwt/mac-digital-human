@@ -344,3 +344,73 @@ def test_content_shot_pages_only_claimed_by_capable_workers() -> None:
             assert capable_lease is not None
             assert capable_lease.slide_index == 1
             assert capable_lease.payload["required_capabilities"] == ["script-media-cues"]
+
+
+
+def test_freeform_content_shot_page_requires_layout_capability() -> None:
+    with TestClient(app) as client:
+        token = _register(client)
+        parent_job_id = _queued_parent(client, token)
+
+        with SessionLocal() as db:
+            initialize_parent_graph(db, parent_job_id)
+            publish_prepared_pages(
+                db,
+                parent_job_id=parent_job_id,
+                pages=[
+                    {
+                        "index": 1,
+                        "narration": "freeform content shot page",
+                        "estimated_seconds": 30,
+                        "media_cues": [
+                            {
+                                "id": "cue-1",
+                                "asset_id": "asset-1",
+                                "overlay_box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+                            }
+                        ],
+                        "required_capabilities": [
+                            "script-media-cues",
+                            "script-media-cues-layout-v1",
+                        ],
+                    }
+                ],
+            )
+            old_cue_worker = WorkerNode(
+                name="old-cue-mini",
+                credential_hash=f"test-{uuid4().hex}",
+                status="online",
+                accepting_tasks=True,
+                slots_total=1,
+                slots_busy=0,
+                capabilities_json=json.dumps(["musetalk", "script-media-cues"]),
+                render_contract_version=saas_settings.render_contract_version,
+            )
+            layout_worker = WorkerNode(
+                name="layout-cue-mini",
+                credential_hash=f"test-{uuid4().hex}",
+                status="online",
+                accepting_tasks=True,
+                slots_total=1,
+                slots_busy=0,
+                capabilities_json=json.dumps(
+                    ["musetalk", "script-media-cues", "script-media-cues-layout-v1"]
+                ),
+                render_contract_version=saas_settings.render_contract_version,
+            )
+            db.add_all([old_cue_worker, layout_worker])
+            db.commit()
+            old_id = old_cue_worker.id
+            layout_id = layout_worker.id
+
+        with SessionLocal() as db:
+            assert claim_page_task(db, node_id=old_id) is None
+
+        with SessionLocal() as db:
+            lease = claim_page_task(db, node_id=layout_id)
+            assert lease is not None
+            assert lease.slide_index == 1
+            assert lease.payload["required_capabilities"] == [
+                "script-media-cues",
+                "script-media-cues-layout-v1",
+            ]
