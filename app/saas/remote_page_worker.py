@@ -27,6 +27,7 @@ from ..composer import CourseComposer, media_duration
 from ..config import settings as app_settings
 from ..engines import MuseTalkMLXEngine
 from .avatar_matting_engine import PortraitMattingEngine
+from .media_cues import media_cue_asset_ids
 from .render_core import PageRenderPlan, RenderWorkspace, execute_page
 from .settings import saas_settings
 from .tts_pipeline import build_course_tts, normalize_external_audio, synthesize_course_audio
@@ -947,6 +948,15 @@ class RemotePageWorker:
 
         background_id = str(payload.get("background_asset_id") or "")
         override = dict(payload.get("override") or {})
+        media_cues = payload.get("media_cues")
+        if not isinstance(media_cues, list):
+            media_cues = override.get("media_cues") if isinstance(override.get("media_cues"), list) else []
+        override["media_cues"] = media_cues
+        cue_asset_paths = {
+            asset_id: files[asset_id]
+            for asset_id in media_cue_asset_ids(media_cues)
+            if asset_id in files
+        }
         if background_id and background_id in files and override.get("custom_bg"):
             target = (
                 app_settings.workspace_dir
@@ -1031,7 +1041,9 @@ class RemotePageWorker:
                 "video_done": 75,
                 "video_skipped": 75,
                 "compose_start": 80,
-                "compose_done": 90,
+                "media_cue_start": 86,
+                "media_cue_done": 90,
+                "compose_done": 92,
             }
             stage_metrics[stage] = detail
             self.api.progress(task, mapping.get(stage, 50), stage, detail)
@@ -1050,6 +1062,7 @@ class RemotePageWorker:
                 settings_payload=course_settings,
                 prepared_audio=prepared_audio,
                 prepared_audio_source=prepared_audio_source,
+                media_cue_assets=cue_asset_paths,
                 on_stage=on_stage,
             )
         finally:
@@ -1083,6 +1096,7 @@ class RemotePageWorker:
             "tts_elapsed_seconds": result.tts_elapsed_seconds,
             "render_seconds": result.render_seconds,
             "audio_source": result.audio_source,
+            "media_cues": (result.metadata or {}).get("media_cues", []),
             "stages": stage_metrics,
         }
         return result.segment_path, result.audio_path, media, metrics
