@@ -10,6 +10,7 @@ CUDA_VENDOR_DIR="${CUDA_VENDOR_DIR:-$ROOT/vendor/MuseTalk-CUDA}"
 CONDA_ENV="${MUSETALK_CONDA_ENV:-musetalk-cuda}"
 MUSETALK_REPO="${MUSETALK_REPO:-https://github.com/TMElyralab/MuseTalk.git}"
 MUSETALK_CUDA_REV="${MUSETALK_CUDA_REV:-0a89dec45a0192b824e3cf4daf96c239440c5ed8}"
+CONDA_CHANNEL="${CUDA_WORKER_CONDA_CHANNEL:-https://conda.anaconda.org/conda-forge}"
 
 say() { printf '\n==> %s\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -45,7 +46,7 @@ git -C "$CUDA_VENDOR_DIR" checkout "$MUSETALK_CUDA_REV"
 
 if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV"; then
   say "Creating isolated Python 3.10 CUDA environment: $CONDA_ENV"
-  conda create -y -n "$CONDA_ENV" python=3.10
+  conda create -y -n "$CONDA_ENV" --override-channels -c "$CONDA_CHANNEL" python=3.10 pip
 fi
 
 run() { conda run -n "$CONDA_ENV" "$@"; }
