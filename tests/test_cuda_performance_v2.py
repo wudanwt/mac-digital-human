@@ -78,3 +78,38 @@ def test_resident_runtime_uses_clean_json_protocol_and_master_cache():
     assert "latent_prepare_seconds" in source
     assert "blend_material_prepare_seconds" in source
     assert "OrderedDict" in source
+
+
+
+def test_cuda_resume_never_installs_packages():
+    source = Path("scripts/cloud/resume_cuda_worker.sh").read_text(encoding="utf-8")
+    forbidden = [
+        "setup_cuda_worker_runtime.sh",
+        "setup_musetalk_cuda.sh",
+        "pip install",
+        "conda install",
+        "apt-get install",
+    ]
+    for token in forbidden:
+        assert token not in source
+    assert "--check-only" in source
+    assert "git pull --ff-only" in source
+
+
+def test_cuda_ffmpeg_selector_prefers_working_nvenc():
+    source = Path("scripts/cloud/select_cuda_ffmpeg.sh").read_text(encoding="utf-8")
+    assert "/usr/bin/ffmpeg" in source
+    assert "h264_nvenc" in source
+    assert "CUDA_REQUIRE_NVENC" in source
+    assert "CUDA_SELECTED_FFMPEG_NVENC" in source
+
+
+def test_cuda_fast_blend_has_visual_fallback_switch():
+    resident = Path("scripts/cloud/musetalk_cuda_resident.py").read_text(encoding="utf-8")
+    streaming = Path("scripts/cloud/musetalk_cuda_stream.py").read_text(encoding="utf-8")
+    assert "MUSETALK_CUDA_FAST_BLEND" in resident
+    assert "_fast_blend_frame" in resident
+    assert "upstream-pil" in resident
+    assert "MUSETALK_CUDA_FAST_BLEND" in streaming
+    assert "_fast_blend_frame" in streaming
+    assert "upstream-pil" in streaming
