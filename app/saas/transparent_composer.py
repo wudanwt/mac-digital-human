@@ -133,7 +133,7 @@ class TransparentCourseComposer(CourseComposer):
                 "ffmpeg", "-y", *inputs, "-filter_complex", graph,
                 "-map", "[outv]", "-map", "1:a",
                 "-af", f"aresample={cfg.audio_rate}",
-                "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf), "-pix_fmt", "yuv420p",
+                *self._video_encode_args(preset="medium", crf=cfg.crf), "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(target),
             ])
             return target
@@ -209,7 +209,7 @@ class TransparentCourseComposer(CourseComposer):
             "-filter_complex", graph,
             "-map", "[outv]", "-map", "2:a",
             "-af", f"aresample={cfg.audio_rate}",
-            "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf), "-pix_fmt", "yuv420p",
+            *self._video_encode_args(preset="medium", crf=cfg.crf), "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(target),
         ])
         return target

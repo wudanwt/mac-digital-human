@@ -26,6 +26,7 @@ import psutil
 from ..composer import CourseComposer, media_duration
 from ..config import settings as app_settings
 from ..engines import create_musetalk_engine, normalize_musetalk_backend
+from ..video_encoding import video_encoder_info
 from .avatar_matting_engine import PortraitMattingEngine
 from .media_cues import media_cue_asset_ids
 from .render_core import PageRenderPlan, RenderWorkspace, execute_page
@@ -87,6 +88,8 @@ class RemoteWorkerConfig:
     upload_chunk_bytes: int
     request_timeout_seconds: float
     render_backend: str = "mlx"
+    auxiliary_mode: str = "normal"
+    auxiliary_fallback_poll_seconds: float = 8.0
 
     @classmethod
     def from_env(cls) -> "RemoteWorkerConfig":
@@ -119,6 +122,12 @@ class RemoteWorkerConfig:
             if agent_runtime is not None and agent_runtime.name
             else socket.gethostname()
         )
+        auxiliary_mode = os.getenv("REMOTE_WORKER_AUXILIARY_MODE", "normal").strip().lower()
+        if auxiliary_mode not in {"preferred", "normal", "fallback", "off"}:
+            raise RuntimeError(
+                "REMOTE_WORKER_AUXILIARY_MODE must be preferred, normal, fallback, or off"
+            )
+
         return cls(
             api_base=api_base,
             token=token,
@@ -174,6 +183,11 @@ class RemoteWorkerConfig:
             ),
             request_timeout_seconds=float(os.getenv("REMOTE_WORKER_HTTP_TIMEOUT_SECONDS", "120")),
             render_backend=render_backend,
+            auxiliary_mode=auxiliary_mode,
+            auxiliary_fallback_poll_seconds=max(
+                1.0,
+                float(os.getenv("REMOTE_WORKER_AUXILIARY_FALLBACK_SECONDS", "8")),
+            ),
         )
 
 
@@ -304,6 +318,25 @@ class RemoteApi:
         raise RemoteApiError(f"center API {response.status_code}: {detail}", status_code=response.status_code)
 
     def register(self) -> dict[str, Any]:
+        encoder = video_encoder_info() if self.config.render_backend == "cuda" else None
+        capabilities = [
+            "musetalk",
+            "transparent-avatar-compose",
+            "script-media-cues",
+            f"backend:{self.config.render_backend}",
+            "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
+        ]
+        if self.config.auxiliary_mode != "off":
+            capabilities.extend(["speech-preview", "portrait-matting"])
+        capabilities.append(f"aux-routing:{self.config.auxiliary_mode}")
+        if encoder is not None:
+            capabilities.append(f"video-encoder:{encoder['selected']}")
+            resident_enabled = os.getenv("MUSETALK_CUDA_RESIDENT", "1").strip().lower() not in {
+                "0", "false", "no", "off"
+            }
+            capabilities.append(
+                "musetalk-runtime:resident-v3" if resident_enabled else "musetalk-runtime:streaming-v2"
+            )
         response = self.control_client.post(
             self._url("register"),
             json={
@@ -312,18 +345,23 @@ class RemoteApi:
                 "platform": platform.platform(),
                 "machine": platform.machine(),
                 "slots_total": 1,
-                "capabilities": [
-                    "musetalk",
-                    "speech-preview",
-                    "portrait-matting",
-                    "transparent-avatar-compose",
-                    "script-media-cues",
-                    f"backend:{self.config.render_backend}",
-                    "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
-                ],
+                "capabilities": capabilities,
                 "versions": {
                     "python": platform.python_version(),
                     "musetalk_backend": self.config.render_backend,
+                    **(
+                        {
+                            "video_encoder": str(encoder["selected"]),
+                            "musetalk_runtime": (
+                                "resident-v3"
+                                if os.getenv("MUSETALK_CUDA_RESIDENT", "1").strip().lower()
+                                not in {"0", "false", "no", "off"}
+                                else "streaming-v2"
+                            ),
+                        }
+                        if encoder is not None
+                        else {}
+                    ),
                 },
                 "code_version": self.config.code_version,
                 "model_version": self.config.model_version,
@@ -1013,9 +1051,19 @@ class RemotePageWorker:
         work = RenderWorkspace.create(
             app_settings.workspace_dir / "remote-page-worker" / task["attempt_id"]
         )
+        download_started = time.time()
         files = self._download_inputs(task)
+        asset_download_seconds = time.time() - download_started
         lease.checkpoint()
-        self.api.progress(task, 10, "assets_ready", {"asset_count": len(files)})
+        self.api.progress(
+            task,
+            10,
+            "assets_ready",
+            {
+                "asset_count": len(files),
+                "asset_download_seconds": round(asset_download_seconds, 4),
+            },
+        )
 
         slide_artifact_id = str(payload.get("slide_artifact_id") or "")
         if not slide_artifact_id or slide_artifact_id not in files:
@@ -1027,6 +1075,21 @@ class RemotePageWorker:
         if not master_id or master_id not in files:
             raise ValueError("master video asset is missing from the task manifest")
         master_path = files[master_id]
+        manifest_descriptors = [
+            *(task.get("assets") or []),
+            *(task.get("prepared_artifacts") or []),
+        ]
+        master_descriptor = next(
+            (
+                item
+                for item in manifest_descriptors
+                if str(item.get("id") or "") == master_id
+            ),
+            None,
+        )
+        master_digest = str((master_descriptor or {}).get("sha256") or "").strip().lower()
+        if not master_digest:
+            master_digest = _sha256(master_path)
         alpha_id = str(payload.get("alpha_asset_id") or "")
         alpha_path = files.get(alpha_id) if alpha_id else None
 
@@ -1114,7 +1177,12 @@ class RemotePageWorker:
                 raise ValueError("transparent/white page requires a prepared alpha asset")
             context.alpha_source = alpha_path
 
-        stage_metrics: dict[str, Any] = {}
+        stage_metrics: dict[str, Any] = {
+            "assets_ready": {
+                "asset_count": len(files),
+                "asset_download_seconds": round(asset_download_seconds, 4),
+            }
+        }
 
         def on_stage(stage: str, detail: dict[str, Any]) -> None:
             lease.checkpoint()
@@ -1141,7 +1209,7 @@ class RemotePageWorker:
                 avatar_engine=self.avatar_engine,
                 composer=self.composer,
                 master_path=master_path,
-                master_cache_key=f"remote:{master_id}:{_sha256(master_path)}",
+                master_cache_key=f"remote:{master_id}:{master_digest}",
                 job_id=task["parent_job_id"],
                 settings_payload=course_settings,
                 prepared_audio=prepared_audio,
@@ -1176,11 +1244,20 @@ class RemotePageWorker:
                 "audio_channels": probe["audio_channels"],
             },
         }
+        render_metadata = dict(result.metadata or {})
         metrics = {
+            "asset_download_seconds": round(asset_download_seconds, 4),
             "tts_elapsed_seconds": result.tts_elapsed_seconds,
             "render_seconds": result.render_seconds,
+            "compose_seconds": result.compose_seconds,
+            "media_cue_seconds": result.media_cue_seconds,
             "audio_source": result.audio_source,
-            "media_cues": (result.metadata or {}).get("media_cues", []),
+            "video_encoder": render_metadata.get("video_encoder"),
+            "compose_video_encoder": render_metadata.get("compose_video_encoder"),
+            "media_cue_video_encoder": render_metadata.get("media_cue_video_encoder"),
+            "render_pipeline": render_metadata.get("pipeline"),
+            "cuda_timings": render_metadata.get("cuda_timings", {}),
+            "media_cues": render_metadata.get("media_cues", []),
             "stages": stage_metrics,
         }
         return result.segment_path, result.audio_path, media, metrics
@@ -1216,9 +1293,17 @@ class RemotePageWorker:
                 video, audio, media, metrics = self._execute(task, lease)
                 lease.checkpoint()
                 self.api.progress(task, 92, "uploading", metrics)
+                upload_audio_started = time.time()
                 self.api.upload(task, kind="page_audio", source=audio)
+                metrics["upload_audio_seconds"] = round(time.time() - upload_audio_started, 4)
                 lease.checkpoint()
+                upload_video_started = time.time()
                 self.api.upload(task, kind="page_video", source=video)
+                metrics["upload_video_seconds"] = round(time.time() - upload_video_started, 4)
+                metrics["upload_total_seconds"] = round(
+                    metrics["upload_audio_seconds"] + metrics["upload_video_seconds"],
+                    4,
+                )
                 lease.checkpoint()
                 metrics["worker_elapsed_seconds"] = round(time.time() - started, 3)
                 self.api.complete(task, metrics=metrics, media=media)
@@ -1341,6 +1426,9 @@ class RemotePageWorker:
         self.register()
         heartbeat = self.start_heartbeat()
         prefer_auxiliary = False
+        next_auxiliary_fallback_at = (
+            time.monotonic() + self.config.auxiliary_fallback_poll_seconds
+        )
         try:
             while not self._stop.is_set():
                 if not self._disk_ready():
@@ -1355,10 +1443,29 @@ class RemotePageWorker:
                     continue
                 self._last_error = None
                 try:
-                    auxiliary = self.api.claim_auxiliary() if prefer_auxiliary else None
-                    task = None if auxiliary else self.api.claim()
-                    if task is None and auxiliary is None and not prefer_auxiliary:
+                    mode = self.config.auxiliary_mode
+                    if mode == "off":
+                        auxiliary = None
+                        task = self.api.claim()
+                    elif mode == "preferred":
                         auxiliary = self.api.claim_auxiliary()
+                        task = None if auxiliary else self.api.claim()
+                    elif mode == "fallback":
+                        now_monotonic = time.monotonic()
+                        if now_monotonic >= next_auxiliary_fallback_at:
+                            auxiliary = self.api.claim_auxiliary()
+                            next_auxiliary_fallback_at = (
+                                now_monotonic + self.config.auxiliary_fallback_poll_seconds
+                            )
+                            task = None if auxiliary else self.api.claim()
+                        else:
+                            auxiliary = None
+                            task = self.api.claim()
+                    else:
+                        auxiliary = self.api.claim_auxiliary() if prefer_auxiliary else None
+                        task = None if auxiliary else self.api.claim()
+                        if task is None and auxiliary is None and not prefer_auxiliary:
+                            auxiliary = self.api.claim_auxiliary()
                 except Exception as exc:  # noqa: BLE001
                     self._last_error = str(exc)
                     log.warning("Task claim failed: %s", exc)
@@ -1367,7 +1474,8 @@ class RemotePageWorker:
                 if task is None and auxiliary is None:
                     time.sleep(1)
                     continue
-                prefer_auxiliary = not prefer_auxiliary
+                if self.config.auxiliary_mode == "normal":
+                    prefer_auxiliary = not prefer_auxiliary
                 if auxiliary is not None:
                     self.process_auxiliary_task(auxiliary)
                 else:

@@ -31,7 +31,7 @@ Target: Ubuntu/Linux + NVIDIA driver + `nvidia-smi` and a bootstrap Python with 
 ```bash
 git clone https://github.com/wudanwt/mac-digital-human-saas.git
 cd mac-digital-human-saas
-git checkout feat/cuda-worker
+git checkout feat/cuda-resident-v3
 
 bash scripts/cloud/setup_musetalk_cuda.sh
 bash scripts/cloud/setup_cuda_worker_runtime.sh
@@ -39,8 +39,8 @@ bash scripts/cloud/setup_cuda_worker_runtime.sh
 
 The CUDA deployment intentionally uses two isolated environments:
 
-- `musetalk-cuda`: Python 3.10 + official MuseTalk 1.5 / PyTorch 2.0.1 CUDA 11.8.
-- `digital-human-worker`: Python 3.11 + SaaS Worker / CosyVoice / matting / CUDA-enabled PyTorch 2.3.1.
+- `.venv-musetalk-cuda`: Python 3.10 + official MuseTalk 1.5 / PyTorch 2.0.1 CUDA 11.8.
+- `.venv-cuda-worker`: Python 3.11 + SaaS Worker / CosyVoice / matting / CUDA-enabled PyTorch 2.3.1.
 
 The bootstrap prints the exact `CUDA_WORKER_PYTHON=...` path to copy into `.env.cuda-worker`.
 
@@ -78,20 +78,124 @@ A single value remains valid, so existing Mac-only deployments do not change.
 
 ## Start
 
+First start on a newly provisioned machine:
+
 ```bash
 bash scripts/saas/start_remote_page_worker_cuda.sh
 ```
 
+After restoring a saved cloud snapshot, prefer the snapshot-safe resume command:
+
+```bash
+bash scripts/cloud/resume_cuda_worker.sh
+```
+
+Use `--check-only` to sync/check without starting the Worker. The resume command intentionally never runs pip, conda, apt, model setup or runtime setup; it fails clearly when a saved dependency is missing instead of modifying a known-good snapshot.
+
+The CUDA startup path also probes installed FFmpeg binaries. This matters on cloud images where an activated Conda environment can shadow `/usr/bin/ffmpeg` with a build that cannot use NVENC. The selector tests the current binary, `/usr/bin/ffmpeg`, `/usr/local/bin/ffmpeg` and other known candidates with a real one-frame `h264_nvenc` encode, then puts the first working binary at the front of PATH.
+
+For a dedicated NVIDIA production worker you can make software fallback a startup error:
+
+```env
+CUDA_REQUIRE_NVENC=1
+```
+
+When NVENC is unavailable, `check_musetalk_cuda.sh` prints the exact FFmpeg smoke-test error and NVIDIA encode-library visibility instead of silently hiding the reason.
+
 The startup script verifies the official MuseTalk CUDA environment and also requires CUDA to be visible in the main Worker Python so TTS does not silently fall back to CPU.
+
+## CUDA performance V2
+
+The Linux CUDA path keeps the official MuseTalk 1.5 models and preprocessing APIs, but replaces the demo-style result spool with a streaming output pipeline:
+
+```text
+MuseTalk decode
+  -> face blend
+  -> raw BGR frames over stdin
+  -> FFmpeg
+  -> h264_nvenc when usable
+  -> page avatar MP4 with audio
+```
+
+Generated result frames are no longer written as thousands of PNG files and then read back by FFmpeg. The source master is still decoded through MuseTalk's existing preprocessing path in V2; persistent master/bbox/latent caching belongs to the later resident-runtime phase.
+
+CUDA Worker startup defaults to:
+
+```env
+MUSETALK_CUDA_STREAMING=1
+MUSETALK_CUDA_VIDEO_ENCODER=auto
+VIDEO_ENCODER_BACKEND=auto
+VIDEO_ENCODER_NVENC_PRESET=p4
+```
+
+`auto` does a real one-frame NVENC smoke encode. When NVENC is not usable, the code falls back to `libx264` unless `VIDEO_ENCODER_STRICT=1` is set. Mac workers do not set these CUDA environment variables and keep the existing software/MLX behavior.
+
+Per-page metrics now include asset download, TTS, MuseTalk render, base composition, media-cue composition, upload, and detailed CUDA stage timings. For the streaming MuseTalk path the CUDA timing object includes model load, source decode, audio features, landmark detection, VAE latent preparation, UNet/VAE decode, blend+encode, frame counts, output bytes, and the selected video encoder.
+
+Set `MUSETALK_CUDA_STREAMING=0` to roll back only the MuseTalk output path to the pinned upstream PNG implementation without changing the rest of the Worker.
+
+## CUDA resident V3
+
+V3 keeps the V2 rawvideo/NVENC pipeline and adds a long-lived MuseTalk Python 3.10 runtime behind the Python 3.11 SaaS Worker. The two environments remain isolated; the Worker talks to the resident process over a private JSON-lines pipe.
+
+```text
+Python 3.11 SaaS Worker
+  -> resident control pipe
+     -> Python 3.10 MuseTalk runtime
+        -> UNet / VAE / Whisper / FaceParsing stay loaded
+        -> master cache by master_cache_key
+           -> decoded frames
+           -> face coordinates
+           -> VAE latents
+           -> precomputed blend masks
+        -> rawvideo -> FFmpeg -> NVENC
+```
+
+Default CUDA V3 controls:
+
+```env
+MUSETALK_CUDA_STREAMING=1
+MUSETALK_CUDA_RESIDENT=1
+MUSETALK_CUDA_RESIDENT_FALLBACK=1
+MUSETALK_CUDA_MASTER_CACHE_ITEMS=2
+MUSETALK_CUDA_MASTER_CACHE_CPU_GB=6
+MUSETALK_CUDA_MASTER_CACHE_GPU_GB=4
+MUSETALK_CUDA_RESIDENT_START_TIMEOUT=240
+MUSETALK_CUDA_RESIDENT_REQUEST_TIMEOUT=1800
+MUSETALK_CUDA_FAST_BLEND=1
+```
+
+The first page for a master video is a cache miss and prepares the master. Later pages using the same frozen master asset reuse the cached frames, coordinates, masks and VAE latents. Cache entries are LRU-evicted by both item count and memory budget; the newest entry is retained even if a single large master exceeds a budget.
+
+CUDA V3 also defaults to NumPy alpha blending for the cached face mask. It preserves the same precomputed MuseTalk mask but avoids per-frame full-image PIL conversion/paste overhead. Set `MUSETALK_CUDA_FAST_BLEND=0` to return to the upstream PIL blending implementation for visual comparison or rollback.
+
+Per-page CUDA metrics include `master_cache_hit`, `master_prepare_seconds`, cache hit/miss/eviction counters, cache CPU/GPU estimates, resident uptime, and resident model-load time. On a cache hit, source decode, landmark, latent preparation and blend-material preparation report zero for that page.
+
+Rollback is layered:
+
+```env
+# Disable only resident V3; keep V2 streaming + NVENC.
+MUSETALK_CUDA_RESIDENT=0
+
+# Disable streaming V2 too; use the pinned upstream MuseTalk PNG path.
+MUSETALK_CUDA_STREAMING=0
+
+# Keep CUDA inference but force software H.264.
+VIDEO_ENCODER_BACKEND=libx264
+MUSETALK_CUDA_VIDEO_ENCODER=libx264
+```
+
+If the resident process crashes or a resident render fails, `MUSETALK_CUDA_RESIDENT_FALLBACK=1` stops the resident process and automatically retries that page through the V2 streaming path.
 
 ## Current CUDA behavior
 
-- MuseTalk: official MuseTalk 1.5 PyTorch/CUDA implementation.
+- MuseTalk: official MuseTalk 1.5 PyTorch/CUDA model stack with the V2 streaming output adapter.
 - TTS: existing CosyVoice 2.0 provider; it selects CUDA automatically when available.
+- Page composition and media-cue output: NVENC on Linux CUDA workers when usable.
 - Page lease / heartbeat / downloads / uploads: same protocol as Mac Remote Worker.
-- Portrait matting / transparent composition: same Worker code path.
+- Portrait matting: PyTorch CUDA FP16 when available; transparent composition shares the same page contract.
 - MuseTalk MLX resident runtime and Apple cache tuning are untouched.
-- CUDA MuseTalk initially uses the official per-page inference entrypoint. Further resident-model/cache optimization can be added behind the CUDA backend without changing the Mac implementation.
+- CUDA V3 keeps the MuseTalk model process resident and reuses master frames/bbox/masks/latents across pages.
 
 ## Production rollout
 

@@ -4,83 +4,128 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-say() { printf '\n==> %s\n' "$*"; }
-fail() { echo "ERROR: $*" >&2; exit 1; }
+BRANCH="${CUDA_WORKER_BRANCH:-feat/cuda-resident-v3}"
+ENV_FILE="${CUDA_WORKER_ENV_FILE:-$ROOT/.env.cuda-worker}"
+CHECK_ONLY=0
+SKIP_GIT=0
 
-# 1. 检查虚拟环境
-WORKER_VENV="${CUDA_WORKER_VENV:-$ROOT/.venv-cuda-worker}"
-MUSE_VENV="${CUDA_MUSE_VENV:-$ROOT/.venv-musetalk-cuda}"
+usage() {
+  cat <<'EOF'
+Usage: bash scripts/cloud/resume_cuda_worker.sh [--check-only] [--skip-git]
 
-[ -x "$WORKER_VENV/bin/python" ] || fail "Worker Venv 不存在: $WORKER_VENV"
-[ -x "$MUSE_VENV/bin/python" ] || fail "MuseTalk Venv 不存在: $MUSE_VENV"
+Resume an already-provisioned CUDA Worker after a cloud snapshot/restart.
 
-say "检测 CUDA 运行环境与 GPU 状态"
-"$WORKER_VENV/bin/python" - <<'PY'
-import torch
-import onnxruntime as ort
+This script intentionally NEVER runs pip, conda, apt, setup_musetalk_cuda.sh,
+or setup_cuda_worker_runtime.sh. Missing dependencies cause a clear failure
+instead of modifying the saved environment.
 
-print("PyTorch CUDA available:", torch.cuda.is_available())
-if not torch.cuda.is_available():
-    raise SystemExit("PyTorch 无法识别 CUDA 设备！")
+Options:
+  --check-only  Pull/check the environment but do not start the Worker.
+  --skip-git    Do not fetch/checkout/pull the configured branch.
+EOF
+}
 
-providers = ort.get_available_providers()
-print("ONNX Runtime providers:", providers)
-if "CUDAExecutionProvider" not in providers:
-    raise SystemExit("ONNX Runtime 缺失 CUDAExecutionProvider！")
-PY
-
-# 2. 检查环境变量配置
-ENV_FILE="$ROOT/.env.cuda-worker"
-if [ -f "$ENV_FILE" ]; then
-    say "加载节点环境变量: $ENV_FILE"
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-fi
-
-# 3. 清理残留锁文件
-rm -rf "$ROOT/workspace/.remote-worker-locks/"*
-
-# 4. 检查并启动 MuseTalk Resident 守护进程
-RESIDENT_LOG="$ROOT/workspace/musetalk-cuda-resident.log"
-mkdir -p "$ROOT/workspace"
-
-pkill -f 'musetalk_cuda_resident.py' || true
-sleep 1
-
-say "启动 MuseTalk 常驻推理守护进程 (Resident V3)..."
-nohup "$MUSE_VENV/bin/python" "$ROOT/scripts/cloud/musetalk_cuda_resident.py" \
-    --musetalk-dir "$ROOT/vendor/MuseTalk-CUDA" \
-    --unet-model-path "$ROOT/vendor/MuseTalk-CUDA/models/musetalkV15/unet.pth" \
-    --unet-config "$ROOT/vendor/MuseTalk-CUDA/models/musetalkV15/musetalk.json" \
-    --whisper-dir "$ROOT/vendor/MuseTalk-CUDA/models/whisper" \
-    --gpu-id 0 \
-    --cache-items 2 \
-    --cache-cpu-gb 6.0 \
-    --cache-gpu-gb 4.0 \
-    --use-float16 \
-    >> "$RESIDENT_LOG" 2>&1 &
-
-RESIDENT_PID=$!
-echo "Resident PID: $RESIDENT_PID"
-
-say "等待常驻守护进程就绪 (最多等待 30 秒)..."
-READY=0
-for i in $(seq 1 30); do
-    if grep -q "ready" "$RESIDENT_LOG" 2>/dev/null; then
-        READY=1
-        break
-    fi
-    sleep 1
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    --skip-git) SKIP_GIT=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
 done
 
-if [ "$READY" -eq 1 ]; then
-    say "MuseTalk 常驻进程就绪成功！"
-else
-    say "提示: 常驻进程在后台持续初始化中，查看: $RESIDENT_LOG"
+echo "=== CUDA Worker resume ==="
+echo "Repository : $ROOT"
+echo "Branch     : $BRANCH"
+echo "Env file   : $ENV_FILE"
+echo
+
+[ -d "$ROOT/.git" ] || { echo "ERROR: not a Git repository: $ROOT" >&2; exit 2; }
+[ -f "$ENV_FILE" ] || {
+  echo "ERROR: missing $ENV_FILE" >&2
+  echo "Restore the saved .env.cuda-worker; do not recreate the Worker token unnecessarily." >&2
+  exit 2
+}
+
+if [ "$SKIP_GIT" != "1" ]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "ERROR: tracked files have local changes; refusing to overwrite them." >&2
+    git status --short >&2
+    echo "Commit/stash/review the changes first, then rerun resume_cuda_worker.sh." >&2
+    exit 2
+  fi
+
+  echo "==> Syncing application code only (no package installation)"
+  git fetch origin "$BRANCH"
+
+  if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    git checkout "$BRANCH"
+  else
+    git checkout -b "$BRANCH" --track "origin/$BRANCH"
+  fi
+
+  git pull --ff-only origin "$BRANCH"
 fi
 
-# 5. 启动远程 Page Worker 节点服务
-say "启动 Remote Page Worker 节点服务并注册上线..."
-exec "$WORKER_VENV/bin/python" -m app.saas.remote_page_worker
+echo
+echo "==> Current revision"
+git status -sb
+git log -1 --oneline
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+CUDA_WORKER_PYTHON="${CUDA_WORKER_PYTHON:-$ROOT/.venv-cuda-worker/bin/python}"
+MUSETALK_CUDA_PYTHON="${MUSETALK_CUDA_PYTHON:-$ROOT/.venv-musetalk-cuda/bin/python}"
+export CUDA_WORKER_PYTHON MUSETALK_CUDA_PYTHON
+
+for runtime in "$CUDA_WORKER_PYTHON" "$MUSETALK_CUDA_PYTHON"; do
+  if [ ! -x "$runtime" ]; then
+    echo "ERROR: saved CUDA runtime is missing: $runtime" >&2
+    echo "The resume script will not reinstall it automatically." >&2
+    exit 2
+  fi
+done
+
+echo
+echo "==> Selecting an existing FFmpeg/NVENC runtime"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/cloud/select_cuda_ffmpeg.sh"
+
+echo
+echo "==> Main Worker CUDA / ONNX verification"
+"$CUDA_WORKER_PYTHON" - <<'PY'
+import onnxruntime as ort
+import torch
+
+providers = ort.get_available_providers()
+print("python runtime :", __import__("sys").executable)
+print("torch          :", torch.__version__)
+print("torch cuda     :", torch.version.cuda)
+print("cuda available :", torch.cuda.is_available())
+print("gpu            :", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NONE")
+print("onnxruntime    :", ort.__version__)
+print("ORT providers  :", providers)
+
+if not torch.cuda.is_available():
+    raise SystemExit("ERROR: CUDA is unavailable in the main Worker runtime")
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit("ERROR: CUDAExecutionProvider is unavailable in ONNX Runtime")
+PY
+
+echo
+echo "==> MuseTalk / NVENC readiness"
+bash "$ROOT/scripts/cloud/check_musetalk_cuda.sh"
+
+if [ "$CHECK_ONLY" = "1" ]; then
+  echo
+  echo "CUDA Worker snapshot environment is ready. Worker was not started (--check-only)."
+  exit 0
+fi
+
+echo
+echo "==> Starting CUDA Remote Worker"
+exec bash "$ROOT/scripts/saas/start_remote_page_worker_cuda.sh"

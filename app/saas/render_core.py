@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from ..composer import media_duration
 from ..ppt import PresentationParser, PPTRenderer
 from ..subtitles import SubtitleItem, SubtitlesGenerator
+from ..video_encoding import video_encoder_info
 from .media_cues import apply_media_cues
 
 
@@ -60,6 +61,8 @@ class PageRenderResult:
     audio_source: str
     tts_elapsed_seconds: float
     render_seconds: float | None = None
+    compose_seconds: float | None = None
+    media_cue_seconds: float | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -199,6 +202,7 @@ def execute_page(
 
     if on_stage:
         on_stage("compose_start", {"slide_index": plan.index})
+    compose_started = time.time()
     override = plan.override
     target = workspace.segment_dir / f"{plan.index:03d}.mp4"
     composer.compose_segment_layout(
@@ -214,11 +218,17 @@ def execute_page(
         pip_box=override.get("pip_box") or settings_payload.get("pip_box"),
         ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
     )
+    compose_seconds = time.time() - compose_started
+    compose_encoder = str(video_encoder_info().get("selected") or "")
+    metadata["compose_seconds"] = round(compose_seconds, 4)
+    metadata["compose_video_encoder"] = compose_encoder
 
     raw_cues = override.get("media_cues")
+    media_cue_seconds: float | None = None
     if isinstance(raw_cues, list) and raw_cues:
         if on_stage:
             on_stage("media_cue_start", {"slide_index": plan.index, "cue_count": len(raw_cues)})
+        media_cue_started = time.time()
         cue_target = workspace.segment_dir / f"{plan.index:03d}-media-cues.mp4"
         target, cue_timeline = apply_media_cues(
             base_video=target,
@@ -231,7 +241,11 @@ def execute_page(
             layout=plan.layout,
             config=getattr(composer, "config", None),
         )
+        media_cue_seconds = time.time() - media_cue_started
+        media_cue_encoder = str(video_encoder_info().get("selected") or "")
         metadata["media_cues"] = cue_timeline
+        metadata["media_cue_seconds"] = round(media_cue_seconds, 4)
+        metadata["media_cue_video_encoder"] = media_cue_encoder
         if on_stage:
             on_stage(
                 "media_cue_done",
@@ -240,11 +254,22 @@ def execute_page(
                     "cue_count": len(cue_timeline),
                     "timeline": cue_timeline,
                     "segment_path": str(target),
+                    "media_cue_seconds": round(media_cue_seconds, 4),
+                    "video_encoder": media_cue_encoder,
                 },
             )
 
     if on_stage:
-        on_stage("compose_done", {"slide_index": plan.index, "segment_path": str(target)})
+        on_stage(
+            "compose_done",
+            {
+                "slide_index": plan.index,
+                "segment_path": str(target),
+                "compose_seconds": round(compose_seconds, 4),
+                "video_encoder": compose_encoder,
+                "media_cue_seconds": round(media_cue_seconds, 4) if media_cue_seconds is not None else None,
+            },
+        )
 
     return PageRenderResult(
         index=plan.index,
@@ -254,6 +279,8 @@ def execute_page(
         audio_source=audio_source,
         tts_elapsed_seconds=float(tts_elapsed),
         render_seconds=float(render_seconds) if render_seconds is not None else None,
+        compose_seconds=float(compose_seconds),
+        media_cue_seconds=float(media_cue_seconds) if media_cue_seconds is not None else None,
         metadata=metadata,
     )
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..composer import ComposeConfig, ComposeError
+from ..video_encoding import ffmpeg_video_encode_args
 
 
 _ALLOWED_DISPLAY_MODES = {"fullscreen", "content_area", "overlay"}
@@ -515,12 +516,7 @@ def apply_media_cues(
         f"[{last_video}]",
         "-map",
         "[aout]",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        str(cfg.crf),
+        *ffmpeg_video_encode_args(crf=cfg.crf, software_preset="veryfast"),
         "-pix_fmt",
         "yuv420p",
         "-c:a",

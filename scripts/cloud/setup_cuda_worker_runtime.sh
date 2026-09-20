@@ -58,14 +58,36 @@ say "Pinning CUDA Worker compatibility stack"
   "wetext==0.0.4" \
   "rembg==2.0.67"
 
-# CPU and GPU ONNX Runtime distributions expose the same Python module and
-# must not coexist. Remove whatever rembg/cosyvoice extras pulled in first.
-"$PY" -m pip uninstall -y onnxruntime onnxruntime-gpu >/dev/null 2>&1 || true
+say "Checking ONNX Runtime CUDA provider"
+if "$PY" - <<'PY'
+try:
+    import onnxruntime as ort
+except Exception:
+    raise SystemExit(1)
 
-# PyTorch 2.3.1 in this Worker uses CUDA 11.8/cuDNN 8. Use the matching
-# official ONNX Runtime CUDA-11 feed instead of the default CUDA-12 wheel.
-"$PY" -m pip install "onnxruntime-gpu==1.20.1" \
-  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+providers = ort.get_available_providers()
+print("onnxruntime:", ort.__version__)
+print("providers:", providers)
+raise SystemExit(
+    0
+    if ort.__version__ == "1.20.1" and "CUDAExecutionProvider" in providers
+    else 1
+)
+PY
+then
+  say "ONNX Runtime GPU 1.20.1 is already healthy; skipping reinstall"
+else
+  say "Repairing ONNX Runtime CUDA 11 provider"
+  # CPU and GPU ONNX Runtime distributions expose the same Python module and
+  # must not coexist. Only remove/reinstall when the current runtime failed
+  # the exact version/provider health check above.
+  "$PY" -m pip uninstall -y onnxruntime onnxruntime-gpu >/dev/null 2>&1 || true
+
+  # PyTorch 2.3.1 in this Worker uses CUDA 11.8/cuDNN 8. Use the matching
+  # official ONNX Runtime CUDA-11 feed instead of the default CUDA-12 wheel.
+  "$PY" -m pip install "onnxruntime-gpu==1.20.1" \
+    --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+fi
 
 say "Verifying ONNX Runtime CUDA provider"
 "$PY" - <<'PY'
@@ -73,10 +95,12 @@ import onnxruntime as ort
 providers = ort.get_available_providers()
 print("onnxruntime:", ort.__version__)
 print("providers:", providers)
+if ort.__version__ != "1.20.1":
+    raise SystemExit(f"Unexpected ONNX Runtime version: {ort.__version__}")
 if "CUDAExecutionProvider" not in providers:
     raise SystemExit(
-        "CUDAExecutionProvider is unavailable. The Worker would fall back to CPU "
-        "for CosyVoice speech-token extraction, so installation is stopped."
+        "CUDAExecutionProvider is unavailable. CosyVoice speech-token extraction "
+        "requires the CUDA provider on NVIDIA workers."
     )
 PY
 
