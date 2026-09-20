@@ -47,7 +47,7 @@ jobs:
       - name: Install media system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          sudo apt-get install -y ffmpeg fonts-noto-cjk libreoffice-impress
       - name: Install
         run: |
           python -m pip install --upgrade pip
