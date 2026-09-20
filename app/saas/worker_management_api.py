@@ -14,6 +14,7 @@ from .distributed_render_models import RenderAttempt, RenderSubtask, WorkerNode
 from .models import RenderJobRecord
 from .security import Principal, require_superuser
 from .settings import saas_settings
+from .worker_status_api import _legacy_status
 
 
 router = APIRouter(prefix="/admin/workers", tags=["admin-worker-management"])
@@ -191,10 +192,15 @@ def worker_overview(
         )
         or 0
     )
+    legacy_engines = _legacy_status()
+    legacy_online_count = sum(int(item.get("count") or 0) for item in legacy_engines.values() if item.get("online"))
     return {
         "render_contract_version": saas_settings.render_contract_version,
+        "legacy_engines": legacy_engines,
         "summary": {
             "total": len(workers),
+            "visible_total": len(workers) + legacy_online_count,
+            "legacy_online": legacy_online_count,
             "registered": sum(1 for item in workers if item["effective_status"] not in {"revoked", "pending"}),
             "online": sum(1 for item in workers if item["online"]),
             "busy": statuses.count("busy"),
