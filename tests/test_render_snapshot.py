@@ -47,9 +47,11 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
         ppt_bytes = b"snapshot-ppt"
         master_bytes = b"snapshot-video"
         audio_bytes = b"snapshot-audio"
+        cue_bytes = b"snapshot-content-shot"
         ppt = _upload(client, token, "snapshot.pptx", "ppt", ppt_bytes)
         master = _upload(client, token, "snapshot.mp4", "video", master_bytes)
         audio = _upload(client, token, "snapshot.wav", "audio", audio_bytes)
+        cue_asset = _upload(client, token, "content-shot.mp4", "video", cue_bytes)
 
         voice_response = client.post(
             "/api/saas/voices",
@@ -79,11 +81,31 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
         assert avatar_response.status_code == 201, avatar_response.text
         avatar = avatar_response.json()
 
+        narration = "Welcome to Youyou Story Time. Youyou is here."
+        selected = "Youyou Story Time."
+        start = narration.index(selected)
         original_script = [
             {
                 "index": 1,
-                "narration": "Welcome to Youyou Story Time. Youyou is here.",
+                "narration": narration,
                 "layout": "pip",
+                "media_cues": [
+                    {
+                        "id": "cue-snapshot",
+                        "asset_id": cue_asset["id"],
+                        "media_type": "video",
+                        "display_mode": "content_area",
+                        "status": "valid",
+                        "anchor": {
+                            "start_offset": start,
+                            "end_offset": start + len(selected),
+                            "selected_text": selected,
+                        },
+                        "source_start_ms": 0,
+                        "source_end_ms": None,
+                        "audio_mode": "mute",
+                    }
+                ],
             }
         ]
         original_settings = {
@@ -123,6 +145,8 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
             assert frozen["voice"]["settings"] == {"pause_seconds": 0.22}
             assert frozen["assets"][ppt["id"]]["sha256"] == hashlib.sha256(ppt_bytes).hexdigest()
             assert frozen["assets"][master["id"]]["sha256"] == hashlib.sha256(master_bytes).hexdigest()
+            assert frozen["assets"][cue_asset["id"]]["sha256"] == hashlib.sha256(cue_bytes).hexdigest()
+            assert frozen["pages"][0]["media_cues"][0]["asset_id"] == cue_asset["id"]
             first_hash = row.snapshot_hash
 
         changed = client.patch(
