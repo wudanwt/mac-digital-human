@@ -823,16 +823,29 @@ def test_worker_management_metrics_group_and_editing() -> None:
         assert payload["cpu_percent"] == 42.5
         assert payload["memory_percent"] == 51.25
 
+        heartbeat_again = client.post(
+            "/api/saas/internal/render/heartbeat",
+            headers=worker_headers,
+            json={
+                "disk_free_bytes": 99 * 1024**3,
+                "memory_available_mb": 8000,
+                "cpu_percent": 44.0,
+                "memory_percent": 52.0,
+            },
+        )
+        assert heartbeat_again.status_code == 200, heartbeat_again.text
+
         with SessionLocal() as db:
             node = db.get(WorkerNode, worker["id"])
             assert node is not None
             assert node.group_name == "production"
-            sample = db.scalar(
+            samples = db.scalars(
                 select(WorkerHeartbeatSample).where(
                     WorkerHeartbeatSample.node_id == worker["id"]
                 )
-            )
-            assert sample is not None
+            ).all()
+            assert len(samples) == 1
+            sample = samples[0]
             assert sample.cpu_percent == 42.5
             assert sample.memory_percent == 51.25
 
