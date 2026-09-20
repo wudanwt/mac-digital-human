@@ -402,7 +402,8 @@ def register_worker_runtime(
 ) -> dict[str, Any]:
     was_incompatible = node.status == "incompatible"
     error = _compatibility_error(body)
-    node.name = body.name.strip()
+    # Operator-managed identity and capacity live in the control plane.
+    # Runtime registration refreshes machine facts only.
     node.host = body.host.strip()
     node.platform = body.platform.strip()
     node.machine = body.machine.strip()
