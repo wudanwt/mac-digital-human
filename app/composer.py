@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import settings
+from .video_encoding import ffmpeg_video_encode_args
 
 
 class ComposeError(RuntimeError):
@@ -67,6 +68,12 @@ class CourseComposer:
     def __init__(self, config: ComposeConfig | None = None) -> None:
         self.config = config or ComposeConfig()
 
+    def _video_encode_args(self, *, preset: str = "medium", crf: int | None = None) -> list[str]:
+        return ffmpeg_video_encode_args(
+            crf=self.config.crf if crf is None else crf,
+            software_preset=preset,
+        )
+
     @staticmethod
     def subtitle_font_candidates() -> tuple[tuple[str, int], ...]:
         return _SUBTITLE_FONT_CANDIDATES
@@ -119,12 +126,7 @@ class CourseComposer:
                 vf,
                 "-af",
                 f"aresample={cfg.audio_rate}",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                str(cfg.crf),
+                *self._video_encode_args(preset="medium", crf=cfg.crf),
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -188,7 +190,7 @@ class CourseComposer:
                         "-filter_complex", vf,
                         "-map", "2:a",
                         "-af", f"aresample={cfg.audio_rate}",
-                        "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                        *self._video_encode_args(preset="medium", crf=cfg.crf),
                         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                         str(target),
                     ]
@@ -205,7 +207,7 @@ class CourseComposer:
                         "-i", str(slide_image), "-i", str(audio),
                         "-filter_complex", vf,
                         "-af", f"aresample={cfg.audio_rate}",
-                        "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                        *self._video_encode_args(preset="medium", crf=cfg.crf),
                         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                         str(target),
                     ]
@@ -222,7 +224,7 @@ class CourseComposer:
                         "-i", str(slide_image), "-i", str(audio),
                         "-vf", vf,
                         "-af", f"aresample={cfg.audio_rate}",
-                        "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                        *self._video_encode_args(preset="medium", crf=cfg.crf),
                         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                         str(target),
                     ]
@@ -243,7 +245,7 @@ class CourseComposer:
                     "-vf", vf,
                     "-map", "0:v", "-map", "1:a",
                     "-af", f"aresample={cfg.audio_rate}",
-                    "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                    *self._video_encode_args(preset="medium", crf=cfg.crf),
                     "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                     str(target),
                 ]
@@ -356,7 +358,7 @@ class CourseComposer:
                     "-map", "[outv]",
                     "-map", "2:a",
                     "-af", f"aresample={cfg.audio_rate}",
-                    "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                    *self._video_encode_args(preset="medium", crf=cfg.crf),
                     "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                     str(target),
                 ]
@@ -397,12 +399,7 @@ class CourseComposer:
                     "2:a",
                     "-af",
                     f"aresample={cfg.audio_rate}",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "medium",
-                    "-crf",
-                    str(cfg.crf),
+                    *self._video_encode_args(preset="medium", crf=cfg.crf),
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -595,7 +592,7 @@ class CourseComposer:
                     "-filter_complex", fc_str,
                     "-map", f"[{last_out}]",
                     "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.crf),
+                    *self._video_encode_args(preset="medium", crf=cfg.crf),
                     "-c:a", "copy",
                     *metadata_args,
                     *duration_args,
@@ -617,7 +614,7 @@ class CourseComposer:
                 "-i", str(video_path), "-loop", "1", "-framerate", "1", "-i", str(badge_path),
                 "-filter_complex", "[0:v:0][1:v:0]overlay=W-w-24:H-h-24:format=auto[v]",
                 "-map", "[v]", "-map", "0:a?", "-map", "0:s?",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                *self._video_encode_args(preset="veryfast", crf=18),
                 "-pix_fmt", "yuv420p", "-c:a", "copy", "-c:s", "copy",
                 "-metadata", "comment=AI-generated digital human content",
                 "-t", f"{media_duration(video_path):.3f}", "-movflags", "+faststart",
