@@ -405,7 +405,8 @@ def register_worker_runtime(
     node.host = body.host.strip()
     node.platform = body.platform.strip()
     node.machine = body.machine.strip()
-    node.slots_total = body.slots_total
+    # slots_total is control-plane configuration. The runtime may advertise its
+    # preferred capacity, but a restart must not overwrite an operator override.
     node.capabilities_json = json.dumps(body.capabilities, ensure_ascii=False, sort_keys=True)
     node.versions_json = json.dumps(body.versions, ensure_ascii=False, sort_keys=True)
     node.code_version = body.code_version.strip()
