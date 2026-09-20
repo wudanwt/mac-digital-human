@@ -280,3 +280,67 @@ def test_stalled_page_attempt_is_requeued_even_with_live_lease() -> None:
             assert task.active_attempt_id is None
             assert task.assigned_node_id is None
             assert node is not None and node.slots_busy == 0
+
+
+
+def test_content_shot_pages_only_claimed_by_capable_workers() -> None:
+    with TestClient(app) as client:
+        token = _register(client)
+        parent_job_id = _queued_parent(client, token)
+
+        with SessionLocal() as db:
+            initialize_parent_graph(db, parent_job_id)
+            publish_prepared_pages(
+                db,
+                parent_job_id=parent_job_id,
+                pages=[
+                    {
+                        "index": 1,
+                        "narration": "content shot page",
+                        "estimated_seconds": 30,
+                        "media_cues": [{"id": "cue-1", "asset_id": "asset-1"}],
+                        "required_capabilities": ["script-media-cues"],
+                    },
+                    {
+                        "index": 2,
+                        "narration": "ordinary page",
+                        "estimated_seconds": 20,
+                    },
+                ],
+            )
+            legacy = WorkerNode(
+                name="legacy-mini",
+                credential_hash=f"test-{uuid4().hex}",
+                status="online",
+                accepting_tasks=True,
+                slots_total=1,
+                slots_busy=0,
+                capabilities_json=json.dumps(["musetalk"]),
+                render_contract_version=saas_settings.render_contract_version,
+            )
+            capable = WorkerNode(
+                name="cue-mini",
+                credential_hash=f"test-{uuid4().hex}",
+                status="online",
+                accepting_tasks=True,
+                slots_total=1,
+                slots_busy=0,
+                capabilities_json=json.dumps(["musetalk", "script-media-cues"]),
+                render_contract_version=saas_settings.render_contract_version,
+            )
+            db.add_all([legacy, capable])
+            db.commit()
+            legacy_id = legacy.id
+            capable_id = capable.id
+
+        with SessionLocal() as db:
+            legacy_lease = claim_page_task(db, node_id=legacy_id)
+            assert legacy_lease is not None
+            assert legacy_lease.slide_index == 2
+            db.commit()
+
+        with SessionLocal() as db:
+            capable_lease = claim_page_task(db, node_id=capable_id)
+            assert capable_lease is not None
+            assert capable_lease.slide_index == 1
+            assert capable_lease.payload["required_capabilities"] == ["script-media-cues"]
