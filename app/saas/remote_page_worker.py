@@ -1061,6 +1061,21 @@ class RemotePageWorker:
         if not master_id or master_id not in files:
             raise ValueError("master video asset is missing from the task manifest")
         master_path = files[master_id]
+        manifest_descriptors = [
+            *(task.get("assets") or []),
+            *(task.get("prepared_artifacts") or []),
+        ]
+        master_descriptor = next(
+            (
+                item
+                for item in manifest_descriptors
+                if str(item.get("id") or "") == master_id
+            ),
+            None,
+        )
+        master_digest = str((master_descriptor or {}).get("sha256") or "").strip().lower()
+        if not master_digest:
+            master_digest = _sha256(master_path)
         alpha_id = str(payload.get("alpha_asset_id") or "")
         alpha_path = files.get(alpha_id) if alpha_id else None
 
@@ -1180,7 +1195,7 @@ class RemotePageWorker:
                 avatar_engine=self.avatar_engine,
                 composer=self.composer,
                 master_path=master_path,
-                master_cache_key=f"remote:{master_id}:{_sha256(master_path)}",
+                master_cache_key=f"remote:{master_id}:{master_digest}",
                 job_id=task["parent_job_id"],
                 settings_payload=course_settings,
                 prepared_audio=prepared_audio,
