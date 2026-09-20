@@ -1239,6 +1239,8 @@ class RemotePageWorker:
             "media_cue_seconds": result.media_cue_seconds,
             "audio_source": result.audio_source,
             "video_encoder": render_metadata.get("video_encoder"),
+            "compose_video_encoder": render_metadata.get("compose_video_encoder"),
+            "media_cue_video_encoder": render_metadata.get("media_cue_video_encoder"),
             "render_pipeline": render_metadata.get("pipeline"),
             "cuda_timings": render_metadata.get("cuda_timings", {}),
             "media_cues": render_metadata.get("media_cues", []),
