@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..composer import ComposeConfig, ComposeError
+from ..video_encoding import ffmpeg_video_encode_args
 
 
 _ALLOWED_DISPLAY_MODES = {"fullscreen", "content_area", "overlay"}
