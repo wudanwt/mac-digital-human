@@ -772,3 +772,37 @@ def test_expired_worker_enrollment_is_rejected() -> None:
             )
             assert enrollment is not None
             assert enrollment.used_at is None
+
+
+
+def test_allowed_task_assets_include_content_shot_media(monkeypatch) -> None:
+    monkeypatch.setattr(
+        distributed_worker_api,
+        "_snapshot_payload",
+        lambda _db, _parent: {
+            "avatar": {"master_video_asset_id": "master"},
+            "voice": {"reference_asset_id": "reference"},
+            "pages": [
+                {
+                    "index": 1,
+                    "media_cues": [
+                        {"id": "cue-1", "asset_id": "shot-from-snapshot"},
+                    ],
+                }
+            ],
+        },
+    )
+    task = SimpleNamespace(
+        parent_job_id="parent-1",
+        slide_index=1,
+        payload_json=json.dumps(
+            {
+                "media_cues": [{"id": "cue-2", "asset_id": "shot-from-payload"}],
+                "override": {
+                    "media_cues": [{"id": "cue-3", "asset_id": "shot-from-override"}],
+                },
+            }
+        ),
+    )
+    allowed = distributed_worker_api._allowed_asset_ids(None, task)
+    assert {"master", "reference", "shot-from-snapshot", "shot-from-payload", "shot-from-override"}.issubset(allowed)
