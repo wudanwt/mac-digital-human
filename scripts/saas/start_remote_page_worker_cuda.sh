@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-ENV_FILE="\${CUDA_WORKER_ENV_FILE:-$ROOT/.env.cuda-worker}"
+ENV_FILE="${CUDA_WORKER_ENV_FILE:-$ROOT/.env.cuda-worker}"
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing CUDA Worker env: $ENV_FILE" >&2
   echo "Copy .env.cuda-worker.example to .env.cuda-worker and configure it first." >&2
@@ -16,16 +16,16 @@ set -a
 source "$ENV_FILE"
 set +a
 
-: "\${REMOTE_WORKER_API_BASE:?REMOTE_WORKER_API_BASE is required}"
-: "\${REMOTE_WORKER_TOKEN:?REMOTE_WORKER_TOKEN is required on Linux CUDA workers}"
+: "${REMOTE_WORKER_API_BASE:?REMOTE_WORKER_API_BASE is required}"
+: "${REMOTE_WORKER_TOKEN:?REMOTE_WORKER_TOKEN is required on Linux CUDA workers}"
 
 export REMOTE_WORKER_RENDER_BACKEND=cuda
-export REMOTE_WORKER_MODEL_VERSION="\${REMOTE_WORKER_MODEL_VERSION:-musetalk-cuda}"
+export REMOTE_WORKER_MODEL_VERSION="${REMOTE_WORKER_MODEL_VERSION:-musetalk-cuda}"
 export SAAS_TTS_PREFETCH=0
 
 bash "$ROOT/scripts/cloud/check_musetalk_cuda.sh"
 
-PYTHON="\${CUDA_WORKER_PYTHON:-$ROOT/.venv/bin/python}"
+PYTHON="${CUDA_WORKER_PYTHON:-$ROOT/.venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
   echo "Worker Python not found: $PYTHON" >&2
   echo "Create .venv and install the project with .[saas,matting,cosyvoice]." >&2
