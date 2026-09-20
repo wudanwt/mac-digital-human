@@ -10,7 +10,11 @@ def test_mobile_shell_uses_dynamic_viewport_and_safe_area():
     assert "100dvh" in THEME_CSS
     assert "safe-area-inset-bottom" in THEME_CSS
     assert "scroll-snap-type:x proximity" in THEME_CSS
-    assert "grid-template-columns:repeat(7,1fr)" not in THEME_CSS.split("/* Mobile Responsive V2 */")[-1]
+    mobile = THEME_CSS.split("/* Mobile Responsive V2 */")[-1]
+    assert "grid-template-columns:repeat(7,1fr)" not in mobile
+    assert ".sidebar{" in mobile
+    assert "height:auto;" in mobile
+    assert "min-height:0;" in mobile
 
 
 def test_course_studio_has_touch_friendly_mobile_controls():
