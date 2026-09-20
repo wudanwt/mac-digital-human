@@ -45,6 +45,7 @@ samples/*.pptx
 compose_*.py
 test_*.py
 !tests/test_auxiliary_worker_api.py
+!tests/test_auxiliary_priority_routing.py
 !tests/test_storage_s3_credentials.py
 !tests/test_distributed_finalize_fast_path.py
 !tests/test_avatar_matting_geometry.py

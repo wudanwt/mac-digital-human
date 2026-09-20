@@ -118,6 +118,29 @@ def _asset_descriptor(asset: Asset, lease_id: str) -> dict[str, Any]:
     }
 
 
+def _has_available_preferred_worker(
+    db: Session,
+    required_capability: str,
+    current_node_id: str,
+) -> bool:
+    cutoff = _now() - timedelta(seconds=max(15, saas_settings.distributed_reaper_seconds))
+    nodes = db.scalars(
+        select(WorkerNode)
+        .where(
+            WorkerNode.id != current_node_id,
+            WorkerNode.status.in_(["online", "busy"]),
+            WorkerNode.accepting_tasks.is_(True),
+            WorkerNode.slots_busy < WorkerNode.slots_total,
+            WorkerNode.last_seen_at >= cutoff,
+        )
+    ).all()
+    for n in nodes:
+        caps = set(json.loads(n.capabilities_json or "[]"))
+        if "aux-routing:preferred" in caps and required_capability in caps:
+            return True
+    return False
+
+
 @router.post("/claim")
 def claim_auxiliary_task(
     node: Annotated[WorkerNode, Depends(get_worker_node)],
@@ -130,14 +153,19 @@ def claim_auxiliary_task(
         db.commit()
         return {"task": None}
     capabilities = set(json.loads(node.capabilities_json or "[]"))
+    is_preferred = "aux-routing:preferred" in capabilities
     for kind, model in (("speech_preview", SpeechPreviewJob), ("avatar_matting", AvatarMattingJob)):
         required = "speech-preview" if kind == "speech_preview" else "portrait-matting"
         if required not in capabilities:
             continue
+        query = select(model).where(model.status == "queued")
+        if not is_preferred and _has_available_preferred_worker(db, required, node.id):
+            fallback_cutoff = _now() - timedelta(
+                seconds=saas_settings.distributed_auxiliary_fallback_seconds
+            )
+            query = query.where(model.created_at <= fallback_cutoff)
         job = db.scalar(
-            select(model)
-            .where(model.status == "queued")
-            .order_by(model.created_at.asc())
+            query.order_by(model.created_at.asc())
             .with_for_update(skip_locked=True)
             .limit(1)
         )
@@ -194,6 +222,10 @@ def claim_auxiliary_task(
         node.slots_busy += 1
         node.status = "busy"
         node.current_task_id = lease_id
+        log.info(
+            "Auxiliary task claimed kind=%s job_id=%s node_id=%s node_name=%s preferred=%s",
+            kind, job.id, node.id, node.name, is_preferred,
+        )
         descriptor = {
             "id": lease_id,
             "kind": kind,
@@ -370,7 +402,19 @@ def complete_auxiliary_task(lease_id: str, body: CompleteBody, node: Annotated[W
     job.status, job.stage, job.error = "succeeded", "completed", None
     job.progress = 100
     job.completed_at = job.updated_at = _now()
-    audit(db, action=action, tenant_id=job.tenant_id, user_id=job.user_id, target_type=target_type, target_id=target_id, details={"job_id": job.id, "remote_worker_id": node.id})
+    audit(
+        db,
+        action=action,
+        tenant_id=job.tenant_id,
+        user_id=job.user_id,
+        target_type=target_type,
+        target_id=target_id,
+        details={
+            "job_id": job.id,
+            "remote_worker_id": node.id,
+            "remote_worker_name": node.name,
+        },
+    )
     _release_node(node, lease)
     db.delete(lease)
     db.commit()
