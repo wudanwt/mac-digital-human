@@ -323,6 +323,7 @@ class RemoteApi:
             "musetalk",
             "transparent-avatar-compose",
             "script-media-cues",
+            "script-media-cues-layout-v1",
             f"backend:{self.config.render_backend}",
             "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
         ]
