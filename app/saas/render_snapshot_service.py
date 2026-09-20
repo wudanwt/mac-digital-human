@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from .avatar_matting_models import AvatarMattingJob
+from .media_cues import media_cue_asset_ids
 from .models import Asset, Avatar, Course, RenderJobRecord, VoiceProfile
 from .render_snapshot_models import RenderTaskSnapshot
 from .speech_preview_models import SpeechPreviewJob
@@ -193,7 +194,9 @@ def build_snapshot_payload(connection: Connection, record: RenderJobRecord) -> d
                 course_settings=course_settings,
             )
         background_asset_id = str(item.get("background_asset_id") or "") or None
-        for value in (explicit_audio, preview_audio, background_asset_id):
+        media_cues = item.get("media_cues") if isinstance(item.get("media_cues"), list) else []
+        cue_asset_ids = media_cue_asset_ids(media_cues)
+        for value in (explicit_audio, preview_audio, background_asset_id, *sorted(cue_asset_ids)):
             if value:
                 asset_ids.add(value)
 
@@ -206,6 +209,7 @@ def build_snapshot_payload(connection: Connection, record: RenderJobRecord) -> d
                 "explicit_audio_asset_id": explicit_audio,
                 "preview_audio_asset_id": preview_audio,
                 "background_asset_id": background_asset_id,
+                "media_cues": media_cues,
                 "settings": item,
             }
         )
