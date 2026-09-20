@@ -83,6 +83,15 @@ def _node_runtime_state(node: WorkerNode, *, now: datetime | None = None) -> dic
 
 def _serialize_node(node: WorkerNode, *, now: datetime | None = None) -> dict[str, Any]:
     runtime = _node_runtime_state(node, now=now)
+    warnings: list[str] = []
+    if node.cpu_percent is not None and node.cpu_percent >= 90:
+        warnings.append("cpu_high")
+    if node.memory_percent is not None and node.memory_percent >= 90:
+        warnings.append("memory_high")
+    if runtime["effective_status"] == "disk_low":
+        warnings.append("disk_low")
+    if runtime["effective_status"] == "incompatible":
+        warnings.append("incompatible")
     return {
         "id": node.id,
         "name": node.name,
@@ -107,6 +116,7 @@ def _serialize_node(node: WorkerNode, *, now: datetime | None = None) -> dict[st
         "memory_available_mb": node.memory_available_mb,
         "cpu_percent": node.cpu_percent,
         "memory_percent": node.memory_percent,
+        "health_warnings": warnings,
         "last_seen_at": node.last_seen_at.isoformat() if node.last_seen_at else None,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
@@ -268,7 +278,7 @@ def worker_overview(
             "busy": statuses.count("busy"),
             "draining": statuses.count("draining"),
             "offline": statuses.count("offline"),
-            "warning": sum(1 for status in statuses if status in {"disk_low", "incompatible"}),
+            "warning": sum(1 for item in workers if item.get("health_warnings")),
             "pending": statuses.count("pending"),
             "slots_total": sum(
                 int(item["slots_total"] or 0)
@@ -367,8 +377,24 @@ def worker_detail(
         .limit(240)
     ).all()
 
+    cpu_values = [float(sample.cpu_percent) for sample in samples if sample.cpu_percent is not None]
+    memory_values = [float(sample.memory_percent) for sample in samples if sample.memory_percent is not None]
+    health_summary = {
+        "samples": len(samples),
+        "average_cpu_percent": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
+        "max_cpu_percent": round(max(cpu_values), 1) if cpu_values else None,
+        "average_memory_percent": round(sum(memory_values) / len(memory_values), 1) if memory_values else None,
+        "max_memory_percent": round(max(memory_values), 1) if memory_values else None,
+        "busy_sample_percent": (
+            round(sum(1 for sample in samples if sample.slots_busy > 0) / len(samples) * 100, 1)
+            if samples
+            else None
+        ),
+    }
+
     return {
         "worker": _serialize_node(node, now=now),
+        "health_summary": health_summary,
         "stats_24h": _period_stats(db, node_id, since=now - timedelta(hours=24), now=now),
         "stats_7d": _period_stats(db, node_id, since=now - timedelta(days=7), now=now),
         "active_auxiliary_tasks": [
