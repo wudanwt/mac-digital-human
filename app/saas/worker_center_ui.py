@@ -127,7 +127,7 @@ JS = r'''
     $('page').innerHTML=`
       <div class="section-title"><div><h2>Worker 控制中心</h2><p>统一管理本地、局域网和远程算力节点；查看在线、任务、资源和版本状态</p></div><button class="primary" id="workerAdd">+ 新增 Worker</button></div>
       <div class="grid stats worker-kpis">
-        <div class="stat"><div class="muted">Worker 总数</div><div class="num">${s.total||0}</div><div class="worker-sub">在线 ${s.online||0}</div></div>
+        <div class="stat"><div class="muted">Worker 总数</div><div class="num">${s.visible_total??s.total??0}</div><div class="worker-sub">受管节点在线 ${s.online||0} · 本地兼容 ${s.legacy_online||0}</div></div>
         <div class="stat"><div class="muted">工作中</div><div class="num">${s.busy||0}</div><div class="worker-sub">运行尝试 ${s.running_attempts||0}</div></div>
         <div class="stat"><div class="muted">排空 / 告警</div><div class="num">${(s.draining||0)+(s.warning||0)}</div><div class="worker-sub">Drain ${s.draining||0} · 告警 ${s.warning||0}</div></div>
         <div class="stat"><div class="muted">离线</div><div class="num">${s.offline||0}</div><div class="worker-sub">待注册 ${s.pending||0}</div></div>
@@ -138,8 +138,7 @@ JS = r'''
         <div class="toolbar"><div><h2>Worker 节点</h2><div class="muted">心跳超过控制面在线窗口后自动显示为离线；停止接新任务会进入 Drain</div></div><div class="code">Contract ${esc(data.render_contract_version||'—')}</div></div>
         <div class="table-wrap"><table class="table"><thead><tr><th>节点</th><th>状态 / 槽位</th><th>能力</th><th>资源</th><th>版本</th><th>当前任务</th><th>操作</th></tr></thead><tbody>${workerRows(workers,data.render_contract_version)}</tbody></table></div>
       </div>
-      <div class="split" style="margin-top:16px">
-        <div class="card"><h2>调度规则</h2><div class="muted">仅在线、兼容、允许接任务且有空闲槽位的 Worker 才会参与 claim。Worker 仍按已有 lease / heartbeat 机制工作，本页面只提供控制与可观测能力。</div></div>
+      <div class="card" style="margin-top:16px"><div class="toolbar"><div><h2>本地队列 Worker（兼容模式）</h2><div class="muted">保留现有 Redis/本地 Worker 状态，只读展示；新节点建议统一走 Worker Enrollment 纳入受管节点。</div></div></div><div class="worker-capabilities">${Object.entries(data.legacy_engines||{}).map(([engine,info])=>`<span class="worker-chip">${esc(engine)} · ${info.online?("在线 "+Number(info.count||0)+" 台"):"离线"}</span>`).join("")||"<span class=\"muted\">未启用本地队列 Worker</span>"}</div></div>\n      <div class="split" style="margin-top:16px">\n        <div class="card"><h2>调度规则</h2><div class="muted">仅在线、兼容、允许接任务且有空闲槽位的 Worker 才会参与 claim。Worker 仍按已有 lease / heartbeat 机制工作，本页面只提供控制与可观测能力。</div></div>
         <div class="card"><h2>维护建议</h2><div class="muted">维护节点时优先使用“停止接新任务”，等待当前槽位清空后再停机；“吊销”仅用于永久废弃或凭据泄露的节点。</div></div>
       </div>
     `;
