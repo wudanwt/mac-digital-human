@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CUDA_VENDOR_DIR="${CUDA_VENDOR_DIR:-$ROOT/vendor/MuseTalk-CUDA}"
 CONDA_ENV="${MUSETALK_CONDA_ENV:-musetalk-cuda}"
 MUSETALK_REPO="${MUSETALK_REPO:-https://github.com/TMElyralab/MuseTalk.git}"
+MUSETALK_CUDA_REV="${MUSETALK_CUDA_REV:-0a89dec45a0192b824e3cf4daf96c239440c5ed8}"
 
 say() { printf '\n==> %s\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -33,11 +34,14 @@ fi
 if [ ! -d "$CUDA_VENDOR_DIR/.git" ]; then
   say "Cloning official MuseTalk"
   mkdir -p "$(dirname "$CUDA_VENDOR_DIR")"
-  git clone --depth 1 "$MUSETALK_REPO" "$CUDA_VENDOR_DIR"
+  git clone "$MUSETALK_REPO" "$CUDA_VENDOR_DIR"
 else
-  say "Updating official MuseTalk"
-  git -C "$CUDA_VENDOR_DIR" pull --ff-only
+  say "Refreshing official MuseTalk repository"
+  git -C "$CUDA_VENDOR_DIR" fetch --all --tags
 fi
+
+say "Pinning official MuseTalk revision: $MUSETALK_CUDA_REV"
+git -C "$CUDA_VENDOR_DIR" checkout "$MUSETALK_CUDA_REV"
 
 if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV"; then
   say "Creating isolated Python 3.10 CUDA environment: $CONDA_ENV"
