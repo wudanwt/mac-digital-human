@@ -12,6 +12,7 @@ from app.saas.media_cues import (
     media_cue_asset_ids,
     resolve_media_cue_timeline,
     validate_media_cue_definitions,
+    _cue_box,
 )
 
 
@@ -179,3 +180,34 @@ def test_ffmpeg_media_cue_fullscreen_overlay(tmp_path: Path) -> None:
     before = _pixel(output, max(0.05, start - 0.25))
     assert during[0] > during[2]  # inserted red frame
     assert before[2] > before[0]  # original blue frame
+
+
+
+def test_freeform_overlay_box_reaches_final_render_geometry() -> None:
+    narration = "开场。这里展示一个画中画案例。结束。"
+    cue = _cue(
+        "这里展示一个画中画案例。",
+        narration,
+        display_mode="overlay",
+        overlay_box={"x": 0.10, "y": 0.20, "w": 0.30, "h": 0.40},
+    )
+    resolved = resolve_media_cue_timeline([cue], narration=narration, audio_duration=8.0)
+    assert resolved[0].overlay_box == {"x": 0.10, "y": 0.20, "w": 0.30, "h": 0.40}
+    assert _cue_box(
+        resolved[0],
+        ppt_box=None,
+        layout="pip",
+        config=ComposeConfig(width=320, height=180, fps=25),
+    ) == (32, 36, 96, 72)
+
+
+def test_invalid_freeform_overlay_box_is_rejected_before_render() -> None:
+    narration = "开场。这里展示一个画中画案例。结束。"
+    cue = _cue(
+        "这里展示一个画中画案例。",
+        narration,
+        display_mode="overlay",
+        overlay_box={"x": 0.80, "y": 0.20, "w": 0.40, "h": 0.40},
+    )
+    issues = validate_media_cue_definitions([cue], narration=narration)
+    assert any("画中画坐标无效" in issue for issue in issues)
