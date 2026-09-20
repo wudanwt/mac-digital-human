@@ -60,22 +60,31 @@ class _OnnxMattingSession:
         return self._remove(rgb, session=self._session, only_mask=True, post_process_mask=False)
 
 
-class _MPSMattingSession:
-    name = "pytorch-mps-fp16"
-
-    def __init__(self, model_dir: Path, input_size: int) -> None:
+class _PyTorchMattingSession:
+    def __init__(self, model_dir: Path, input_size: int, device_override: str | None = None) -> None:
         import torch
         from torchvision import transforms
         from transformers import AutoModelForImageSegmentation
 
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("PyTorch MPS is not available")
+        if device_override:
+            device = torch.device(device_override)
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            raise RuntimeError("Neither CUDA nor MPS is available for PyTorch matting")
+
+        self.name = f"pytorch-{device.type}-fp16"
         if not (model_dir / "model.safetensors").is_file():
             raise RuntimeError(f"BiRefNet PyTorch weights not found: {model_dir}")
 
+        if device.type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision("high")
         self._torch = torch
-        self._device = torch.device("mps")
+        self._device = device
         self._dtype = torch.float16
         self._transform = transforms.Compose(
             [
@@ -97,6 +106,9 @@ class _MPSMattingSession:
         with self._torch.inference_mode():
             prediction = self._model(tensor)[-1].sigmoid()[0, 0].float().cpu().numpy()
         return np.clip(prediction * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+_MPSMattingSession = _PyTorchMattingSession
 
 
 class _SceneForegroundRecovery:
@@ -285,8 +297,8 @@ class PortraitMattingEngine:
     def __init__(self, model: str | None = None) -> None:
         self.model = (model or os.getenv("AVATAR_MATTING_MODEL", "birefnet-portrait")).strip() or "birefnet-portrait"
         self.backend = (os.getenv("AVATAR_MATTING_BACKEND", "auto").strip().lower() or "auto")
-        if self.backend not in {"auto", "mps", "onnx"}:
-            raise ValueError("AVATAR_MATTING_BACKEND must be auto, mps, or onnx")
+        if self.backend not in {"auto", "cuda", "mps", "pytorch", "onnx"}:
+            raise ValueError("AVATAR_MATTING_BACKEND must be auto, cuda, mps, pytorch, or onnx")
         self.torch_model_dir = Path(
             os.getenv(
                 "AVATAR_MATTING_TORCH_MODEL_DIR",
@@ -317,7 +329,9 @@ class PortraitMattingEngine:
             "requested_backend": requested,
             "selected_backend": None,
             "rembg": False,
+            "cuda": False,
             "mps": False,
+            "torch_model": (model_dir / "model.safetensors").is_file(),
             "mps_model": (model_dir / "model.safetensors").is_file(),
             "opencv": False,
             "ffmpeg": False,
@@ -333,9 +347,10 @@ class PortraitMattingEngine:
             import torchvision  # noqa: F401
             import transformers  # noqa: F401
 
-            result["mps"] = bool(torch.backends.mps.is_available())
+            result["cuda"] = bool(torch.cuda.is_available())
+            result["mps"] = bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
         except Exception as exc:
-            result["mps_error"] = str(exc)
+            result["torch_error"] = str(exc)
         try:
             import cv2  # noqa: F401
 
@@ -347,27 +362,42 @@ class PortraitMattingEngine:
             result["ffmpeg"] = proc.returncode == 0
         except Exception as exc:
             result["ffmpeg_error"] = str(exc)
-        mps_ready = bool(result["mps"] and result["mps_model"])
-        if requested == "mps":
+        cuda_ready = bool(result["cuda"] and result["torch_model"])
+        mps_ready = bool(result["mps"] and result["torch_model"])
+        if requested == "cuda":
+            backend_ready = cuda_ready
+            result["selected_backend"] = "pytorch-cuda-fp16" if cuda_ready else None
+        elif requested == "mps":
             backend_ready = mps_ready
             result["selected_backend"] = "pytorch-mps-fp16" if mps_ready else None
         elif requested == "onnx":
             backend_ready = bool(result["rembg"])
             result["selected_backend"] = "onnx-cpu" if backend_ready else None
         else:
-            backend_ready = bool(mps_ready or result["rembg"])
-            result["selected_backend"] = "pytorch-mps-fp16" if mps_ready else "onnx-cpu" if result["rembg"] else None
+            if cuda_ready:
+                backend_ready = True
+                result["selected_backend"] = "pytorch-cuda-fp16"
+            elif mps_ready:
+                backend_ready = True
+                result["selected_backend"] = "pytorch-mps-fp16"
+            elif result["rembg"]:
+                backend_ready = True
+                result["selected_backend"] = "onnx-cpu"
+            else:
+                backend_ready = False
+                result["selected_backend"] = None
         result["ready"] = bool(backend_ready and result["opencv"] and result["ffmpeg"])
         return result
 
     def _new_session(self):
-        if self.backend in {"auto", "mps"}:
+        if self.backend in {"auto", "cuda", "mps", "pytorch"}:
             try:
-                return _MPSMattingSession(self.torch_model_dir, self.input_size)
+                device_override = "cuda" if self.backend == "cuda" else "mps" if self.backend == "mps" else None
+                return _PyTorchMattingSession(self.torch_model_dir, self.input_size, device_override=device_override)
             except Exception:
-                if self.backend == "mps":
+                if self.backend in {"cuda", "mps", "pytorch"}:
                     raise
-                log.exception("MPS matting initialization failed; falling back to ONNX CPU")
+                log.exception("PyTorch matting initialization failed; falling back to ONNX CPU")
         return _OnnxMattingSession(self.model)
 
     @staticmethod
