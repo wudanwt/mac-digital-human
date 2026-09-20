@@ -289,7 +289,8 @@ def enroll_worker(
     node.accepting_tasks = True
     node.status = "offline"
     if body.name and body.name.strip():
-        node.name = body.name.strip()
+        # name and slots_total are control-plane configuration. Runtime registration
+    # refreshes machine facts without overwriting operator-managed settings.
     node.host = body.host.strip()
     node.platform = body.platform.strip()
     node.machine = body.machine.strip()
