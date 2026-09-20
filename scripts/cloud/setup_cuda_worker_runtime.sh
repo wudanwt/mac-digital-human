@@ -6,6 +6,7 @@ cd "$ROOT"
 
 WORKER_ENV="${CUDA_WORKER_CONDA_ENV:-digital-human-worker}"
 PYTORCH_INDEX="${CUDA_WORKER_TORCH_INDEX:-https://download.pytorch.org/whl/cu118}"
+CONDA_CHANNEL="${CUDA_WORKER_CONDA_CHANNEL:-https://conda.anaconda.org/conda-forge}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 say() { printf '\n==> %s\n' "$*"; }
@@ -15,7 +16,7 @@ command -v git >/dev/null 2>&1 || fail "git not found"
 
 if ! conda env list | awk '{print $1}' | grep -qx "$WORKER_ENV"; then
   say "Creating Python 3.11 worker environment: $WORKER_ENV"
-  conda create -y -n "$WORKER_ENV" python=3.11
+  conda create -y -n "$WORKER_ENV" --override-channels -c "$CONDA_CHANNEL" python=3.11 pip
 fi
 
 run() { conda run --no-capture-output -n "$WORKER_ENV" "$@"; }
