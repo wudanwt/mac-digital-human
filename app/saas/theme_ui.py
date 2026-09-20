@@ -68,7 +68,7 @@ main{padding:0 38px 70px;max-width:1560px;width:100%;margin:0 auto}.topbar{posit
 /* Mobile Responsive V2 */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body,.shell{min-height:100dvh}
-.sidebar{height:100dvh}
+@media(min-width:681px){.sidebar{height:100dvh}}
 .table-wrap,.slide-strip{-webkit-overflow-scrolling:touch}
 @media(max-width:680px){
   body{overscroll-behavior-y:none}
