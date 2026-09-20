@@ -94,7 +94,9 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
                         "id": "cue-snapshot",
                         "asset_id": cue_asset["id"],
                         "media_type": "video",
-                        "display_mode": "content_area",
+                        "display_mode": "overlay",
+                        "overlay_position": "right_top",
+                        "overlay_box": {"x": 0.12, "y": 0.58, "w": 0.31, "h": 0.28},
                         "status": "valid",
                         "anchor": {
                             "start_offset": start,
@@ -147,6 +149,13 @@ def test_render_submission_freezes_script_voice_rules_and_asset_hashes() -> None
             assert frozen["assets"][master["id"]]["sha256"] == hashlib.sha256(master_bytes).hexdigest()
             assert frozen["assets"][cue_asset["id"]]["sha256"] == hashlib.sha256(cue_bytes).hexdigest()
             assert frozen["pages"][0]["media_cues"][0]["asset_id"] == cue_asset["id"]
+            assert frozen["pages"][0]["media_cues"][0]["overlay_box"] == {
+                "x": 0.12,
+                "y": 0.58,
+                "w": 0.31,
+                "h": 0.28,
+            }
+            assert frozen["course"]["script"][0]["media_cues"][0]["overlay_box"]["y"] == 0.58
             first_hash = row.snapshot_hash
 
         changed = client.patch(
