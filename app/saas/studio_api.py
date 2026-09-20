@@ -528,6 +528,10 @@ def render_course(
                     raise HTTPException(status_code=422, detail=f"第 {slide_index} 页内容镜头素材不可用")
                 if cue_asset.kind not in {"video", "image", "background"}:
                     raise HTTPException(status_code=422, detail=f"第 {slide_index} 页内容镜头素材类型不支持")
+                declared_type = str(cue.get("media_type") or "").strip().lower()
+                actual_type = "video" if cue_asset.kind == "video" else "image"
+                if declared_type and declared_type != actual_type:
+                    raise HTTPException(status_code=422, detail=f"第 {slide_index} 页内容镜头素材类型与配置不一致")
     plan = plan_for_tenant(db, principal.tenant_id)
     server_estimate = estimate_script_seconds(script, fallback=saas_settings.default_render_estimate_seconds)
     reserved_seconds = max(server_estimate, int(body.estimated_seconds))
