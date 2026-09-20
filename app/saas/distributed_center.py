@@ -361,6 +361,7 @@ def process_prepare(task_id: str) -> bool:
                     "audio_asset_id": fixed_audio,
                     "audio_source": audio_source,
                     "background_asset_id": frozen_page.get("background_asset_id"),
+                    "media_cues": frozen_page.get("media_cues") if isinstance(frozen_page.get("media_cues"), list) else [],
                     "slide_artifact_id": slide_artifact.id,
                     "render_contract_version": saas_settings.render_contract_version,
                     "estimated_seconds": max(4.0, len(plan.narration) / 4.0),
