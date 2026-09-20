@@ -25,7 +25,7 @@ import psutil
 
 from ..composer import CourseComposer, media_duration
 from ..config import settings as app_settings
-from ..engines import MuseTalkMLXEngine
+from ..engines import create_musetalk_engine, normalize_musetalk_backend
 from .avatar_matting_engine import PortraitMattingEngine
 from .render_core import PageRenderPlan, RenderWorkspace, execute_page
 from .settings import saas_settings
@@ -49,7 +49,7 @@ def worker_lock_path(cache_dir: Path) -> Path:
 
 @contextmanager
 def worker_instance_lock(cache_dir: Path):
-    """Keep one page-worker process per cache/model runtime on a Mac."""
+    """Keep one page-worker process per cache/model runtime on a compute node."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     lock_path = worker_lock_path(cache_dir)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,10 +85,12 @@ class RemoteWorkerConfig:
     transfer_slots: int
     upload_chunk_bytes: int
     request_timeout_seconds: float
+    render_backend: str = "mlx"
 
     @classmethod
     def from_env(cls) -> "RemoteWorkerConfig":
         api_base_env = os.getenv("REMOTE_WORKER_API_BASE", "").strip()
+        render_backend = normalize_musetalk_backend(os.getenv("REMOTE_WORKER_RENDER_BACKEND", "mlx"))
         token = os.getenv("REMOTE_WORKER_TOKEN", "").strip()
         agent_runtime = None
         if not token:
@@ -97,6 +99,10 @@ class RemoteWorkerConfig:
 
                 agent_runtime = load_agent_runtime()
             except Exception as exc:  # noqa: BLE001
+                if platform.system() != "Darwin":
+                    raise RuntimeError(
+                        "REMOTE_WORKER_TOKEN is required on non-macOS remote workers"
+                    ) from exc
                 raise RuntimeError(
                     "REMOTE_WORKER_TOKEN is not set and no enrolled macOS Keychain credential is available"
                 ) from exc
@@ -117,7 +123,10 @@ class RemoteWorkerConfig:
             token=token,
             name=env_name or default_name,
             code_version=os.getenv("REMOTE_WORKER_CODE_VERSION", "0.5.0").strip(),
-            model_version=os.getenv("REMOTE_WORKER_MODEL_VERSION", "musetalk-mlx").strip(),
+            model_version=os.getenv(
+                "REMOTE_WORKER_MODEL_VERSION",
+                "musetalk-cuda" if render_backend == "cuda" else "musetalk-mlx",
+            ).strip(),
             render_contract_version=os.getenv(
                 "REMOTE_WORKER_RENDER_CONTRACT_VERSION",
                 saas_settings.render_contract_version,
@@ -163,6 +172,7 @@ class RemoteWorkerConfig:
                 ) * 1024**2,
             ),
             request_timeout_seconds=float(os.getenv("REMOTE_WORKER_HTTP_TIMEOUT_SECONDS", "120")),
+            render_backend=render_backend,
         )
 
 
@@ -300,8 +310,13 @@ class RemoteApi:
                     "speech-preview",
                     "portrait-matting",
                     "transparent-avatar-compose",
+                    f"backend:{self.config.render_backend}",
+                    "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
                 ],
-                "versions": {"python": platform.python_version()},
+                "versions": {
+                    "python": platform.python_version(),
+                    "musetalk_backend": self.config.render_backend,
+                },
                 "code_version": self.config.code_version,
                 "model_version": self.config.model_version,
                 "render_contract_version": self.config.render_contract_version,
@@ -845,7 +860,9 @@ class RemotePageWorker:
         self._current_task_id: str | None = None
         self._last_error: str | None = None
         self._stop = threading.Event()
-        self.avatar_engine = ContextualMatteMuseTalkEngine(MuseTalkMLXEngine())
+        self.avatar_engine = ContextualMatteMuseTalkEngine(
+            create_musetalk_engine(config.render_backend)
+        )
         self.composer = MatteAwareCourseComposer(CourseComposer().config)
 
     @staticmethod
