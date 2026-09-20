@@ -119,6 +119,9 @@ class ResidentMuseTalkRuntime:
         self.parsing_mode = parsing_mode
         self.extra_margin = extra_margin
         self.cache_items = max(1, cache_items)
+        self.fast_blend = os.getenv("MUSETALK_CUDA_FAST_BLEND", "1").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
         self.cache_cpu_bytes = max(0, int(cache_cpu_gb * 1024**3))
         self.cache_gpu_bytes = max(0, int(cache_gpu_gb * 1024**3))
         self.started_at = time.time()
@@ -193,6 +196,45 @@ class ResidentMuseTalkRuntime:
         stat = path.stat()
         return int(stat.st_size), int(stat.st_mtime_ns)
 
+    def _prepare_alpha_patch(self, mask_array: Any, crop_box: Any, bbox: Any) -> Any:
+        x, y, x1, y1 = [int(v) for v in bbox]
+        x_s, y_s, _x_e, _y_e = [int(v) for v in crop_box]
+        patch = mask_array[y - y_s:y1 - y_s, x - x_s:x1 - x_s]
+        expected_h = max(0, y1 - y)
+        expected_w = max(0, x1 - x)
+        if patch.shape[:2] != (expected_h, expected_w):
+            patch = self.cv2.resize(
+                patch,
+                (expected_w, expected_h),
+                interpolation=self.cv2.INTER_LINEAR,
+            )
+        return patch.astype(self.np.float32, copy=False) / 255.0
+
+    def _fast_blend_frame(self, image: Any, face: Any, bbox: Any, alpha_patch: Any) -> Any:
+        x, y, x1, y1 = [int(v) for v in bbox]
+        out = image.copy()
+        height, width = out.shape[:2]
+        cx0, cy0 = max(0, x), max(0, y)
+        cx1, cy1 = min(width, x1), min(height, y1)
+        if cx1 <= cx0 or cy1 <= cy0:
+            return out
+
+        fx0, fy0 = cx0 - x, cy0 - y
+        fx1, fy1 = fx0 + (cx1 - cx0), fy0 + (cy1 - cy0)
+        src = face[fy0:fy1, fx0:fx1].astype(self.np.float32, copy=False)
+        dst = out[cy0:cy1, cx0:cx1].astype(self.np.float32, copy=False)
+        alpha = alpha_patch[fy0:fy1, fx0:fx1]
+        if alpha.shape[:2] != dst.shape[:2]:
+            alpha = self.cv2.resize(
+                alpha,
+                (dst.shape[1], dst.shape[0]),
+                interpolation=self.cv2.INTER_LINEAR,
+            )
+        alpha = alpha[..., None]
+        blended = src * alpha + dst * (1.0 - alpha)
+        out[cy0:cy1, cx0:cx1] = self.np.clip(blended + 0.5, 0, 255).astype(self.np.uint8)
+        return out
+
     def _estimate_gpu_bytes(self, latents: list[Any]) -> int:
         total = 0
         for tensor in latents:
@@ -209,8 +251,9 @@ class ResidentMuseTalkRuntime:
         for material in blend_materials:
             if material is None:
                 continue
-            mask, _crop = material
+            mask, _crop, alpha_patch = material
             total += int(getattr(mask, "nbytes", 0))
+            total += int(getattr(alpha_patch, "nbytes", 0))
         return total
 
     def _cache_usage(self) -> tuple[int, int]:
@@ -330,7 +373,8 @@ class ResidentMuseTalkRuntime:
                 fp=self.fp,
                 mode=self.parsing_mode,
             )
-            blend_materials.append((mask_array, crop_box))
+            alpha_patch = self._prepare_alpha_patch(mask_array, crop_box, bbox)
+            blend_materials.append((mask_array, crop_box, alpha_patch))
         metrics["blend_material_prepare_seconds"] = _timer() - stage
         metrics["master_prepare_seconds"] = _timer() - stage_all
 
@@ -464,14 +508,22 @@ class ResidentMuseTalkRuntime:
                     (x2 - x1, y2 - y1),
                     interpolation=self.cv2.INTER_LINEAR,
                 )
-                mask_array, crop_box = blend_material
-                combined = self.get_image_blending(
-                    frame_cycle[cycle_index].copy(),
-                    resized,
-                    [x1, y1, x2, y2],
-                    mask_array,
-                    crop_box,
-                )
+                mask_array, crop_box, alpha_patch = blend_material
+                if self.fast_blend:
+                    combined = self._fast_blend_frame(
+                        frame_cycle[cycle_index],
+                        resized,
+                        [x1, y1, x2, y2],
+                        alpha_patch,
+                    )
+                else:
+                    combined = self.get_image_blending(
+                        frame_cycle[cycle_index].copy(),
+                        resized,
+                        [x1, y1, x2, y2],
+                        mask_array,
+                        crop_box,
+                    )
                 proc.stdin.write(self.np.ascontiguousarray(combined).tobytes())
                 written += 1
         finally:
@@ -521,6 +573,7 @@ class ResidentMuseTalkRuntime:
             "output_frame_count": written,
             "source_frame_count": len(material.frames),
             "video_encoder": encoder_name,
+            "blend_backend": "numpy-alpha" if self.fast_blend else "upstream-pil",
             "batch_size": batch_size,
             "fps": round(material.fps, 6),
             "output_bytes": output_path.stat().st_size,
@@ -542,6 +595,7 @@ class ResidentMuseTalkRuntime:
             "cache_gpu_limit_gb": round(self.cache_gpu_bytes / 1024**3, 2),
             "gpu_allocated_mb": round(self.torch.cuda.memory_allocated(self.device) / 1024**2, 2),
             "gpu_reserved_mb": round(self.torch.cuda.memory_reserved(self.device) / 1024**2, 2),
+            "blend_backend": "numpy-alpha" if self.fast_blend else "upstream-pil",
         }
 
 
