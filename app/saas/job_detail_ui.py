@@ -6,6 +6,39 @@ from fastapi.responses import Response
 CSS = r'''
 .job-result-preview{margin-bottom:16px}.job-result-preview video{display:block;width:100%;max-height:min(62vh,720px);aspect-ratio:16/9;object-fit:contain;background:#020305;border:1px solid rgba(151,176,214,.12);border-radius:10px}.job-result-preview .toolbar{margin-bottom:10px}.job-preview-loading{display:grid;place-items:center;min-height:240px;color:#718197;background:#05080c;border-radius:10px}
 .job-detail-shell{position:fixed;inset:0;z-index:760;background:#070a0f;color:#edf5ff;display:grid;grid-template-rows:72px minmax(0,1fr);overflow:hidden}.job-detail-top{display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid rgba(151,176,214,.12);background:rgba(8,12,18,.96);backdrop-filter:blur(20px)}.job-detail-title{display:flex;align-items:center;gap:13px}.job-detail-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#8edcff,#4389e9);box-shadow:0 0 28px rgba(82,164,255,.2)}.job-detail-title h2{margin:0;font-size:16px}.job-detail-title small{display:block;color:#67778c;margin-top:2px}.job-detail-body{overflow:auto;padding:26px 30px 50px}.job-detail-pane{max-width:1440px;margin:0 auto}.job-detail-hero{display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(150px,.55fr));gap:12px;margin-bottom:16px}.job-detail-card{background:linear-gradient(180deg,rgba(17,23,32,.94),rgba(10,14,20,.94));border:1px solid rgba(151,176,214,.12);border-radius:17px;padding:18px;box-shadow:0 18px 52px rgba(0,0,0,.18)}.job-detail-card h1{font-size:22px;margin:0 0 6px}.job-detail-card .metric{font-size:25px;font-weight:780;letter-spacing:-.03em}.job-detail-card .label{font-size:10px;color:#6d7c90;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}.job-detail-progress{height:8px;border-radius:999px;background:#172130;overflow:hidden;margin-top:14px}.job-detail-progress i{display:block;height:100%;background:linear-gradient(90deg,#357fcb,#70ddff);box-shadow:0 0 18px rgba(91,190,255,.28)}.job-phase-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px}.job-phase{position:relative;padding:12px 13px;border:1px solid rgba(151,176,214,.1);border-radius:13px;background:#0c1118;color:#617086}.job-phase b{display:block;font-size:11px;color:#8697aa}.job-phase span{font-size:10px}.job-phase.done{border-color:rgba(80,197,157,.18);background:#0c1817}.job-phase.done b{color:#6fd7b2}.job-phase.active{border-color:rgba(99,181,245,.42);background:#0f1d2c;box-shadow:0 0 0 2px rgba(99,181,245,.055)}.job-phase.active b{color:#85cfff}.job-detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px}.slide-progress-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px}.slide-progress-card{background:#0b1017;border:1px solid rgba(151,176,214,.10);border-radius:14px;padding:14px}.slide-progress-card.current,.slide-progress-card.running{border-color:rgba(105,191,255,.42);box-shadow:0 0 0 2px rgba(105,191,255,.05)}.slide-progress-card.failed{border-color:rgba(255,111,133,.28)}.slide-progress-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}.slide-progress-head b{font-size:12px}.slide-progress-head small{display:block;color:#637389;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}.slide-pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.slide-stage{padding:7px 6px;border-radius:8px;background:#121923;text-align:center;font-size:9px;color:#65758a;border:1px solid transparent}.slide-stage.running{color:#86cbff;border-color:rgba(94,177,239,.26);background:#102033;animation:jobPulse 1.4s infinite}.slide-stage.done{color:#75d9b5;background:#0d211d}.slide-stage.skipped{color:#8895a5;background:#15191f}.slide-stage.failed{color:#ff97a7;background:#2a151b}.slide-progress-bar{height:4px;border-radius:99px;background:#172130;overflow:hidden;margin-top:8px}.slide-progress-bar i{display:block;height:100%;background:linear-gradient(90deg,#357fcb,#70ddff)}.slide-meta-row{display:flex;justify-content:space-between;gap:10px;margin-top:9px;color:#607086;font-size:9px}.job-runtime-side{display:flex;flex-direction:column;gap:10px}.job-runtime-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid rgba(151,176,214,.08);font-size:11px}.job-runtime-line span:first-child{color:#69798e}.job-runtime-detail{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.7;color:#8ca9c4;word-break:break-word;white-space:pre-wrap}.job-error{margin-top:12px;padding:12px;border-radius:10px;background:#29151b;border:1px solid rgba(255,111,133,.2);color:#ff9cad;white-space:pre-wrap}.job-detail-empty{padding:44px;text-align:center;color:#64748b}.job-detail-btn{margin-left:6px;white-space:nowrap}.job-detail-btn.primary-entry{border-color:rgba(90,177,245,.45);background:#10283e;color:#aaddff}@keyframes jobPulse{0%,100%{opacity:1}50%{opacity:.62}}@media(max-width:980px){.job-detail-hero{grid-template-columns:1fr 1fr}.job-detail-layout{grid-template-columns:1fr}.job-phase-row{grid-template-columns:1fr 1fr}.job-detail-body{padding:18px 14px 40px}}@media(max-width:600px){.job-detail-hero{grid-template-columns:1fr}.job-phase-row{grid-template-columns:1fr}.slide-progress-grid{grid-template-columns:1fr}}
+/* Mobile Responsive V2 */
+.job-detail-shell{height:100dvh;max-height:100dvh}
+.job-detail-body{-webkit-overflow-scrolling:touch}
+@media(max-width:600px){
+  .job-detail-shell{grid-template-rows:60px minmax(0,1fr)}
+  .job-detail-top{padding:0 10px;gap:8px}
+  .job-detail-title{gap:8px;min-width:0}
+  .job-detail-mark{width:26px;height:26px;flex:0 0 auto}
+  .job-detail-title>div:last-child{min-width:0}
+  .job-detail-title h2{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job-detail-title small{display:none}
+  .job-detail-top button{min-height:40px;padding:7px 10px}
+  .job-detail-body{padding:14px 10px calc(28px + env(safe-area-inset-bottom))}
+  .job-detail-card{padding:14px;border-radius:14px}
+  .job-detail-card h1{font-size:19px}
+  .job-detail-card .metric{font-size:22px}
+  .job-phase-row{
+    display:flex;
+    gap:7px;
+    overflow-x:auto;
+    padding-bottom:4px;
+    scroll-snap-type:x proximity;
+    -webkit-overflow-scrolling:touch
+  }
+  .job-phase{flex:0 0 132px;scroll-snap-align:start}
+  .slide-progress-card{padding:12px}
+  .slide-progress-head small{max-width:52vw}
+  .job-runtime-line{align-items:flex-start;flex-direction:column;gap:3px}
+  .job-result-preview video{max-height:52dvh;border-radius:8px}
+  .job-preview-loading{min-height:180px}
+  .job-detail-btn{min-height:40px}
+}
+
 '''
 
 

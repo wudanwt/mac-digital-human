@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 HTML = r'''<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Digital Human SaaS Studio</title>
 <link rel="icon" href="data:,">
 <style>

@@ -20,7 +20,21 @@ JS = r'''
     .ops-search{display:flex;gap:8px;min-width:min(420px,100%)}
     .ops-search input{flex:1;border:1px solid #2a3953;background:#0a0f18;color:#fff;padding:10px 12px;border-radius:10px}
     @media(max-width:1100px){.ops-kpis{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:700px){.ops-kpis,.ops-detail-grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:700px){
+      .ops-kpis,.ops-detail-grid{grid-template-columns:1fr 1fr}
+      .ops-search{width:100%;min-width:0}
+      .ops-search input{min-width:0;font-size:16px}
+      .ops-search button{min-height:42px;flex:0 0 auto}
+      .ops-tabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+      .ops-tabs::-webkit-scrollbar{display:none}
+      .ops-tabs button{flex:0 0 auto;min-height:40px}
+      .ops-meter{min-width:88px}
+    }
+    @media(max-width:460px){
+      .ops-kpis,.ops-detail-grid{grid-template-columns:1fr}
+      .ops-search{display:grid;grid-template-columns:minmax(0,1fr) auto}
+      .ops-mini b{font-size:18px}
+    }
   `;
   document.head.appendChild(style);
 
