@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from ..composer import media_duration
 from ..ppt import PresentationParser, PPTRenderer
 from ..subtitles import SubtitleItem, SubtitlesGenerator
+from ..video_encoding import video_encoder_info
 from .media_cues import apply_media_cues
 
 
@@ -218,7 +219,9 @@ def execute_page(
         ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
     )
     compose_seconds = time.time() - compose_started
+    compose_encoder = str(video_encoder_info().get("selected") or "")
     metadata["compose_seconds"] = round(compose_seconds, 4)
+    metadata["compose_video_encoder"] = compose_encoder
 
     raw_cues = override.get("media_cues")
     media_cue_seconds: float | None = None
@@ -239,8 +242,10 @@ def execute_page(
             config=getattr(composer, "config", None),
         )
         media_cue_seconds = time.time() - media_cue_started
+        media_cue_encoder = str(video_encoder_info().get("selected") or "")
         metadata["media_cues"] = cue_timeline
         metadata["media_cue_seconds"] = round(media_cue_seconds, 4)
+        metadata["media_cue_video_encoder"] = media_cue_encoder
         if on_stage:
             on_stage(
                 "media_cue_done",
@@ -250,6 +255,7 @@ def execute_page(
                     "timeline": cue_timeline,
                     "segment_path": str(target),
                     "media_cue_seconds": round(media_cue_seconds, 4),
+                    "video_encoder": media_cue_encoder,
                 },
             )
 
@@ -260,6 +266,7 @@ def execute_page(
                 "slide_index": plan.index,
                 "segment_path": str(target),
                 "compose_seconds": round(compose_seconds, 4),
+                "video_encoder": compose_encoder,
                 "media_cue_seconds": round(media_cue_seconds, 4) if media_cue_seconds is not None else None,
             },
         )
