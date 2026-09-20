@@ -3,11 +3,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from ..composer import media_duration
 from ..ppt import PresentationParser, PPTRenderer
 from ..subtitles import SubtitleItem, SubtitlesGenerator
+from .media_cues import apply_media_cues
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ def execute_page(
     settings_payload: dict[str, Any],
     prepared_audio: Path | None = None,
     prepared_audio_source: str | None = None,
+    media_cue_assets: Mapping[str, Path] | None = None,
     on_stage: PageStageCallback | None = None,
 ) -> PageRenderResult:
     """Execute one page: audio -> lip sync -> page composition.
@@ -212,6 +214,34 @@ def execute_page(
         pip_box=override.get("pip_box") or settings_payload.get("pip_box"),
         ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
     )
+
+    raw_cues = override.get("media_cues")
+    if isinstance(raw_cues, list) and raw_cues:
+        if on_stage:
+            on_stage("media_cue_start", {"slide_index": plan.index, "cue_count": len(raw_cues)})
+        cue_target = workspace.segment_dir / f"{plan.index:03d}-media-cues.mp4"
+        target, cue_timeline = apply_media_cues(
+            base_video=target,
+            output_path=cue_target,
+            raw_cues=raw_cues,
+            asset_paths=media_cue_assets or {},
+            narration=plan.narration,
+            audio_duration=float(duration),
+            ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
+            config=getattr(composer, "config", None),
+        )
+        metadata["media_cues"] = cue_timeline
+        if on_stage:
+            on_stage(
+                "media_cue_done",
+                {
+                    "slide_index": plan.index,
+                    "cue_count": len(cue_timeline),
+                    "timeline": cue_timeline,
+                    "segment_path": str(target),
+                },
+            )
+
     if on_stage:
         on_stage("compose_done", {"slide_index": plan.index, "segment_path": str(target)})
 
