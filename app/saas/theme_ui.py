@@ -74,6 +74,8 @@ body,.shell{min-height:100dvh}
   body{overscroll-behavior-y:none}
   .shell{min-height:100dvh}
   .sidebar{
+    height:auto;
+    min-height:0;
     padding:7px 8px calc(7px + env(safe-area-inset-bottom));
     background:rgba(8,11,16,.96);
     backdrop-filter:blur(24px)
