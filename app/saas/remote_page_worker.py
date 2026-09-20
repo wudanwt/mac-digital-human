@@ -26,6 +26,7 @@ import psutil
 from ..composer import CourseComposer, media_duration
 from ..config import settings as app_settings
 from ..engines import create_musetalk_engine, normalize_musetalk_backend
+from ..video_encoding import video_encoder_info
 from .avatar_matting_engine import PortraitMattingEngine
 from .media_cues import media_cue_asset_ids
 from .render_core import PageRenderPlan, RenderWorkspace, execute_page
@@ -304,6 +305,18 @@ class RemoteApi:
         raise RemoteApiError(f"center API {response.status_code}: {detail}", status_code=response.status_code)
 
     def register(self) -> dict[str, Any]:
+        encoder = video_encoder_info() if self.config.render_backend == "cuda" else None
+        capabilities = [
+            "musetalk",
+            "speech-preview",
+            "portrait-matting",
+            "transparent-avatar-compose",
+            "script-media-cues",
+            f"backend:{self.config.render_backend}",
+            "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
+        ]
+        if encoder is not None:
+            capabilities.append(f"video-encoder:{encoder['selected']}")
         response = self.control_client.post(
             self._url("register"),
             json={
@@ -312,18 +325,11 @@ class RemoteApi:
                 "platform": platform.platform(),
                 "machine": platform.machine(),
                 "slots_total": 1,
-                "capabilities": [
-                    "musetalk",
-                    "speech-preview",
-                    "portrait-matting",
-                    "transparent-avatar-compose",
-                    "script-media-cues",
-                    f"backend:{self.config.render_backend}",
-                    "accelerator:nvidia-cuda" if self.config.render_backend == "cuda" else "accelerator:apple-mlx",
-                ],
+                "capabilities": capabilities,
                 "versions": {
                     "python": platform.python_version(),
                     "musetalk_backend": self.config.render_backend,
+                    **({"video_encoder": str(encoder["selected"])} if encoder is not None else {}),
                 },
                 "code_version": self.config.code_version,
                 "model_version": self.config.model_version,
