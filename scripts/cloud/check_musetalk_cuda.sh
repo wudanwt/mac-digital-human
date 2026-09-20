@@ -42,13 +42,17 @@ if torch.cuda.is_available():
 PY
 
 printf '\n=== CUDA Performance V2 runner ===\n'
-if [ -f "$ROOT/scripts/cloud/musetalk_cuda_stream.py" ]; then
-  "$PYTHON" -m py_compile "$ROOT/scripts/cloud/musetalk_cuda_stream.py"
-  echo "OK   $ROOT/scripts/cloud/musetalk_cuda_stream.py"
-else
-  echo "MISS $ROOT/scripts/cloud/musetalk_cuda_stream.py" >&2
-  exit 1
-fi
+for runner in \
+  "$ROOT/scripts/cloud/musetalk_cuda_stream.py" \
+  "$ROOT/scripts/cloud/musetalk_cuda_resident.py"; do
+  if [ -f "$runner" ]; then
+    "$PYTHON" -m py_compile "$runner"
+    echo "OK   $runner"
+  else
+    echo "MISS $runner" >&2
+    exit 1
+  fi
+done
 
 printf '\n=== MuseTalk files ===\n'
 TORCH_HUB_DIR="$("$PYTHON" -c 'import torch; print(torch.hub.get_dir())')"
