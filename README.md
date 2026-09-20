@@ -122,6 +122,8 @@ Remote Worker V3 支持一次性 Enrollment Code：管理员无需分发长期 W
 
 部署与验收步骤见：[`docs/REMOTE_WORKER_INTERNET.md`](docs/REMOTE_WORKER_INTERNET.md)。
 
+群晖 NAS + 双 Mac mini M4 的低成本生产部署架构、域名/HTTPS/MinIO/备份与分阶段上线方案见：[`docs/SYNOLOGY_M4_PRODUCTION_DEPLOYMENT.md`](docs/SYNOLOGY_M4_PRODUCTION_DEPLOYMENT.md)。
+
 ## 透明讲师资产工作流
 
 透明抠像发生在数字人资产阶段，而不是每次课程生成时重复执行：
