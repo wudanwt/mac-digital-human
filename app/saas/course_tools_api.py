@@ -16,6 +16,7 @@ from starlette.background import BackgroundTask
 
 from ..ppt import PresentationParser, PPTRenderer
 from .database import get_db
+from .media_cues import validate_media_cue_definitions
 from .models import Asset, Avatar, ConsentRecord, Course, VoiceProfile
 from .security import Principal, get_principal
 from .services import audit
@@ -362,6 +363,27 @@ def course_readiness(
     script = json.loads(course.script_json or "[]")
     if not script:
         issues.append("课程讲稿尚未生成或编辑")
+    elif isinstance(script, list):
+        for position, raw in enumerate(script, start=1):
+            if not isinstance(raw, dict):
+                continue
+            slide_index = int(raw.get("index") or position)
+            narration = str(raw.get("narration") or raw.get("script") or "").strip()
+            cues = raw.get("media_cues") if isinstance(raw.get("media_cues"), list) else []
+            for cue_issue in validate_media_cue_definitions(cues, narration=narration):
+                issues.append(f"第 {slide_index} 页：{cue_issue}")
+            for cue in cues:
+                if not isinstance(cue, dict):
+                    continue
+                asset_id = str(cue.get("asset_id") or "")
+                if not asset_id:
+                    continue
+                cue_asset = _asset(db, principal.tenant_id, asset_id)
+                if cue_asset is None or cue_asset.status != "ready":
+                    issues.append(f"第 {slide_index} 页内容镜头素材不可用")
+                    continue
+                if cue_asset.kind not in {"video", "image", "background"}:
+                    issues.append(f"第 {slide_index} 页内容镜头素材类型不支持")
 
     return {
         "course_id": course.id,
