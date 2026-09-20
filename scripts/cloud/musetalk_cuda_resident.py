@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 
+_PROTOCOL_OUT = sys.stdout
+
+
 def _timer() -> float:
     return time.perf_counter()
 
@@ -520,8 +523,8 @@ class ResidentMuseTalkRuntime:
 
 
 def _emit(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    _PROTOCOL_OUT.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    _PROTOCOL_OUT.flush()
 
 
 def main() -> int:
@@ -538,6 +541,10 @@ def main() -> int:
     parser.add_argument("--right-cheek-width", type=int, default=90)
     parser.add_argument("--cache-items", type=int, default=2)
     args = parser.parse_args()
+
+    # Keep stdout as a clean JSON-lines control channel. MuseTalk, mmpose,
+    # transformers and tqdm are free to print diagnostics to stderr.
+    sys.stdout = sys.stderr
 
     try:
         runtime = ResidentMuseTalkRuntime(
