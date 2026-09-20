@@ -68,6 +68,12 @@ class MuseTalkCUDAEngine:
         }
         self.resident_runner = settings.root / "scripts" / "cloud" / "musetalk_cuda_resident.py"
         self.master_cache_items = max(1, int(os.getenv("MUSETALK_CUDA_MASTER_CACHE_ITEMS", "2")))
+        self.master_cache_cpu_gb = max(
+            0.0, float(os.getenv("MUSETALK_CUDA_MASTER_CACHE_CPU_GB", "6"))
+        )
+        self.master_cache_gpu_gb = max(
+            0.0, float(os.getenv("MUSETALK_CUDA_MASTER_CACHE_GPU_GB", "4"))
+        )
         self.resident_start_timeout = max(
             30.0, float(os.getenv("MUSETALK_CUDA_RESIDENT_START_TIMEOUT", "240"))
         )
@@ -176,6 +182,8 @@ class MuseTalkCUDAEngine:
             "resident": self.resident,
             "video_encoder": self.video_encoder,
             "master_cache_items": self.master_cache_items,
+            "master_cache_cpu_gb": self.master_cache_cpu_gb,
+            "master_cache_gpu_gb": self.master_cache_gpu_gb,
             "checks": checks,
             "cuda": probe,
         }
@@ -347,6 +355,10 @@ class MuseTalkCUDAEngine:
                 str(self.gpu_id),
                 "--cache-items",
                 str(self.master_cache_items),
+                "--cache-cpu-gb",
+                str(self.master_cache_cpu_gb),
+                "--cache-gpu-gb",
+                str(self.master_cache_gpu_gb),
             ]
             if self.use_float16:
                 command.append("--use-float16")
