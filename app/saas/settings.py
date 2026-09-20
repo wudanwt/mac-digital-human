@@ -77,9 +77,6 @@ class SaaSSettings:
     # Short-lived, single-use code used to bootstrap a remote Mac without
     # exposing its long-lived Worker credential to the installer.
     distributed_enrollment_minutes: int = int(os.getenv("SAAS_DISTRIBUTED_ENROLLMENT_MINUTES", "30"))
-    auxiliary_preferred_speech_workers: tuple[str, ...] = _env_list("SAAS_AUX_PREFERRED_SPEECH_WORKERS")
-    auxiliary_preferred_matting_workers: tuple[str, ...] = _env_list("SAAS_AUX_PREFERRED_MATTING_WORKERS")
-    auxiliary_preferred_wait_seconds: int = max(0, int(os.getenv("SAAS_AUX_PREFERRED_WAIT_SECONDS", "8")))
 
     max_upload_mb: int = int(os.getenv("SAAS_MAX_UPLOAD_MB", "500"))
     rate_limit_per_minute: int = int(os.getenv("SAAS_RATE_LIMIT_PER_MINUTE", "120"))
