@@ -47,7 +47,7 @@ def _node_runtime_state(node: WorkerNode, *, now: datetime | None = None) -> dic
         seen
         and heartbeat_age is not None
         and heartbeat_age <= online_window
-        and node.status not in {"revoked", "incompatible"}
+        and node.status not in {"revoked", "incompatible", "pending"}
     )
     if node.status in {"revoked", "incompatible", "pending"}:
         effective_status = node.status
