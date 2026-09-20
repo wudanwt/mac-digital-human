@@ -97,7 +97,7 @@ say "Downloading MuseTalk weights"
   mkdir -p models/musetalkV15 models/sd-vae models/whisper models/dwpose models/syncnet models/face-parse-bisent
   # The upstream downloader upgrades huggingface_hub beyond the version
   # required by MuseTalk's transformers pin and uses deprecated CLI flags.
-  run pip install "huggingface_hub==0.30.2" "gdown>=5,<7"
+  run pip install "huggingface_hub==0.30.2"
   export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download TMElyralab/MuseTalk \
     --local-dir models --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
@@ -109,10 +109,8 @@ say "Downloading MuseTalk weights"
     --local-dir models/dwpose --include "dw-ll_ucoco_384.pth"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ByteDance/LatentSync \
     --local-dir models/syncnet --include "latentsync_syncnet.pt"
-  PATH="$MUSETALK_VENV/bin:$PATH" gdown 154JgKpzCPW82qINcVieuPH3fZ2e0P812 \
-    -O models/face-parse-bisent/79999_iter.pth
-  curl -fL --retry 3 https://download.pytorch.org/models/resnet18-5c106cde.pth \
-    -o models/face-parse-bisent/resnet18-5c106cde.pth
+  PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ManyOtherFunctions/face-parse-bisent \
+    --local-dir models/face-parse-bisent --include "79999_iter.pth" "resnet18-5c106cde.pth"
 )
 
 say "Verifying CUDA from PyTorch"
