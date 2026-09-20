@@ -104,6 +104,61 @@ def _anchor_offsets(narration: str, anchor: Mapping[str, Any]) -> tuple[int, int
     return hits[0], hits[0] + len(selected)
 
 
+def validate_media_cue_definitions(raw_cues: Any, *, narration: str) -> list[str]:
+    """Validate text anchors and cue-local settings without touching storage."""
+
+    if not isinstance(raw_cues, list) or not raw_cues:
+        return []
+
+    issues: list[str] = []
+    ranges: list[tuple[int, int, str]] = []
+    for position, raw in enumerate(raw_cues, start=1):
+        if not isinstance(raw, dict):
+            issues.append(f"内容镜头 {position} 数据无效")
+            continue
+        cue_id = str(raw.get("id") or f"#{position}")
+        if str(raw.get("status") or "valid") != "valid":
+            issues.append(f"内容镜头 {cue_id} 的绑定文字需要重新确认")
+        if not raw.get("asset_id"):
+            issues.append(f"内容镜头 {cue_id} 未选择素材")
+
+        try:
+            start, end = _anchor_offsets(
+                narration,
+                raw.get("anchor") if isinstance(raw.get("anchor"), dict) else {},
+            )
+        except ValueError as exc:
+            issues.append(f"内容镜头 {cue_id}：{exc}")
+        else:
+            ranges.append((start, end, cue_id))
+
+        try:
+            source_start = max(0.0, float(raw.get("source_start_ms") or 0))
+        except (TypeError, ValueError):
+            source_start = 0.0
+        if raw.get("source_end_ms") not in {None, ""}:
+            try:
+                source_end = float(raw.get("source_end_ms"))
+            except (TypeError, ValueError):
+                issues.append(f"内容镜头 {cue_id} 的素材终点无效")
+            else:
+                if source_end <= source_start:
+                    issues.append(f"内容镜头 {cue_id} 的素材终点必须大于起点")
+
+        media_type = str(raw.get("media_type") or "video").strip().lower()
+        audio_mode = str(raw.get("audio_mode") or "mute").strip().lower()
+        if media_type == "image" and audio_mode == "original":
+            issues.append(f"内容镜头 {cue_id} 是图片，不能使用素材原声替代讲解")
+
+    ranges.sort()
+    for previous, current in zip(ranges, ranges[1:]):
+        if current[0] < previous[1]:
+            issues.append(
+                f"内容镜头 {previous[2]} 与 {current[2]} 的讲稿绑定范围重叠"
+            )
+    return issues
+
+
 def resolve_media_cue_timeline(
     raw_cues: Any,
     *,
