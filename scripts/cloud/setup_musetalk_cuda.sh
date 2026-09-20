@@ -22,14 +22,26 @@ command -v git >/dev/null || fail "git not found."
 if [ -z "$PYTHON310" ]; then
   if command -v python3.10 >/dev/null 2>&1; then
     PYTHON310="$(command -v python3.10)"
-  elif command -v python >/dev/null 2>&1 && python -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3,10) else 1)' >/dev/null 2>&1; then
-    PYTHON310="$(command -v python)"
   else
-    fail "Python 3.10 not found. The CUDA image should provide Python 3.10."
+    if ! command -v uv >/dev/null 2>&1; then
+      say "Installing uv bootstrap tool"
+      BOOTSTRAP_PYTHON=""
+      if command -v python >/dev/null 2>&1; then
+        BOOTSTRAP_PYTHON="$(command -v python)"
+      elif command -v python3 >/dev/null 2>&1; then
+        BOOTSTRAP_PYTHON="$(command -v python3)"
+      else
+        fail "No bootstrap Python found to install uv"
+      fi
+      "$BOOTSTRAP_PYTHON" -m pip install --upgrade uv
+    fi
+    say "Installing managed Python 3.10"
+    uv python install 3.10
+    PYTHON310="$(uv python find 3.10)"
   fi
 fi
 
-"$PYTHON310" -c 'import sys; assert sys.version_info[:2] == (3,10), sys.version'   || fail "MUSETALK_PYTHON310 must point to Python 3.10"
+"$PYTHON310" -c 'import sys; assert sys.version_info[:2] == (3,10), sys.version' || fail "MUSETALK_PYTHON310 must point to Python 3.10"
 
 say "GPU"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
