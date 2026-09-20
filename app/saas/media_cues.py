@@ -326,11 +326,19 @@ def _cue_box(
     cue: ResolvedMediaCue,
     *,
     ppt_box: Mapping[str, Any] | None,
+    layout: str,
     config: ComposeConfig,
 ) -> tuple[int, int, int, int]:
     if cue.display_mode == "fullscreen":
         return 0, 0, config.width, config.height
     if cue.display_mode == "content_area":
+        if layout == "split":
+            # Mirrors CourseComposer's 7:3 split slide geometry.
+            slide_w = min(config.width, 1288)
+            slide_h = min(config.height, 728)
+            return 48, max(0, (config.height - slide_h) // 2), slide_w, slide_h
+        if layout in {"full_slide", "full_avatar"}:
+            return 0, 0, config.width, config.height
         return _box_from_fraction(ppt_box, width=config.width, height=config.height)
 
     # Keep picture-in-picture intentionally simple in V1. The box preserves
@@ -361,6 +369,7 @@ def apply_media_cues(
     narration: str,
     audio_duration: float,
     ppt_box: Mapping[str, Any] | None,
+    layout: str = "pip",
     config: ComposeConfig | None = None,
 ) -> tuple[Path, list[dict[str, Any]]]:
     """Overlay script-linked media on a fully composed page video.
@@ -410,7 +419,7 @@ def apply_media_cues(
     timeline_metadata: list[dict[str, Any]] = []
     for order, cue in enumerate(cues, start=1):
         idx = input_index_by_cue[cue.id]
-        x, y, w, h = _cue_box(cue, ppt_box=ppt_box, config=cfg)
+        x, y, w, h = _cue_box(cue, ppt_box=ppt_box, layout=layout, config=cfg)
         clip_duration = cue.duration
         if clip_duration <= 0:
             continue
