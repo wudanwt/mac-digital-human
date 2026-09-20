@@ -109,6 +109,10 @@ say "Downloading MuseTalk weights"
     --local-dir models/dwpose --include "dw-ll_ucoco_384.pth"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ByteDance/LatentSync \
     --local-dir models/syncnet --include "latentsync_syncnet.pt"
+  PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ByteDance/LatentSync \
+    --local-dir models/auxiliary --include "auxiliary/s3fd-619a316812.pth"
+  cp models/auxiliary/auxiliary/s3fd-619a316812.pth \
+    musetalk/utils/face_detection/detection/sfd/sfd.pth
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ManyOtherFunctions/face-parse-bisent \
     --local-dir models/face-parse-bisent --include "79999_iter.pth" "resnet18-5c106cde.pth"
 )

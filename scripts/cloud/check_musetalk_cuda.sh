@@ -41,6 +41,7 @@ required=(
   "$CUDA_VENDOR_DIR/models/face-parse-bisent/79999_iter.pth"
   "$CUDA_VENDOR_DIR/models/face-parse-bisent/resnet18-5c106cde.pth"
   "$CUDA_VENDOR_DIR/models/syncnet/latentsync_syncnet.pt"
+  "$CUDA_VENDOR_DIR/musetalk/utils/face_detection/detection/sfd/sfd.pth"
 )
 failed=0
 for path in "${required[@]}"; do
