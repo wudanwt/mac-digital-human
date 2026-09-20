@@ -13,7 +13,7 @@
 - 16:9 PPT / 数字人自由拖拽排版、内置演播厅背景与自定义背景
 - PostgreSQL + Redis 异步任务系统，Mock / MuseTalk 分队列
 - 逐页任务详情：TTS / MuseTalk / Compose 状态、耗时和 ETA
-- Apple Silicon Mac 宿主机真实 Worker
+- Apple Silicon Mac MLX Worker + Linux NVIDIA CUDA Remote Worker
 - MuseTalk 1.5 MLX 常驻 Runtime、VAE latent / mask 缓存与 batch 自动调优
 - CosyVoice 2.0 zero-shot 语音克隆与课程语音流水线
 - 字幕、AI 生成标识、MP4 成片预览与下载
@@ -32,12 +32,7 @@ SaaS API (Docker, :8918)
    |
    +--> avatar:render:mock --------> Docker Mock Worker
    |
-   `--> avatar:render:musetalk ----> Mac Apple Silicon Worker
-                                      |-- CosyVoice 2.0
-                                      |-- MuseTalk 1.5 MLX
-                                      |-- Portrait Matting / Alpha Assets
-                                      `-- FFmpeg / Transparent Course Composer
-```
+   `--> distributed page pool ------> Mac Apple Silicon Worker (MLX)\n                                  `-> Linux NVIDIA Worker (CUDA)\n                                      |-- CosyVoice 2.0\n                                      |-- MuseTalk 1.5 MLX / CUDA\n                                      |-- Portrait Matting / Alpha Assets\n                                      `-- FFmpeg / Transparent Course Composer\n```
 
 Docker 控制面与 Mac Worker 通过 Redis 队列和共享素材目录协同。Mock 与 MuseTalk 使用独立队列，不会互相抢任务。
 
@@ -113,7 +108,7 @@ bash scripts/saas/start_mlx_worker_mac.sh
 启动脚本会先检查 Apple Silicon、FFmpeg、PostgreSQL、Redis、共享素材目录、MuseTalk MLX、CosyVoice 与 Portrait Matting，全部通过后才进入 Worker 循环。
 
 详细说明见：[`docs/MAC_MLX_SAAS.md`](docs/MAC_MLX_SAAS.md)。
-
+\nLinux NVIDIA CUDA Worker 的安装、配置与启动见：[`docs/CUDA_REMOTE_WORKER.md`](docs/CUDA_REMOTE_WORKER.md)。\n
 ### 公网 Remote Worker
 
 Page-level distributed Worker 支持 API-only 模式：异地 Mac 只需要主动访问 Center HTTPS，不需要 PostgreSQL、Redis 或对象存储凭据。生产对象存储为 S3 / OSS / COS 时，可开启短时 Signed URL 直下/直传，大文件不再经过 FastAPI；直连失败会自动回退 Center proxy。
