@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.saas import distributed_worker_api
 from app.saas.database import SessionLocal
-from app.saas.distributed_render_models import RenderArtifact, WorkerEnrollment, WorkerNode
+from app.saas.distributed_render_models import RenderArtifact, WorkerEnrollment, WorkerHeartbeatSample, WorkerNode
 from app.saas.distributed_scheduler import hash_secret, initialize_parent_graph, publish_prepared_pages
 from app.saas.distributed_worker_api import _sha256_path
 from app.saas.models import User
@@ -772,3 +772,106 @@ def test_expired_worker_enrollment_is_rejected() -> None:
             )
             assert enrollment is not None
             assert enrollment.used_at is None
+
+
+def test_worker_management_metrics_group_and_editing() -> None:
+    with TestClient(app) as client:
+        token = _register_user(client)
+        _promote_superuser(token)
+
+        provision = client.post(
+            "/api/saas/distributed/workers",
+            headers=_headers(token),
+            json={"name": "managed-mini", "group_name": "production", "slots_total": 2},
+        )
+        assert provision.status_code == 201, provision.text
+        worker = provision.json()["worker"]
+        worker_token = provision.json()["token"]
+        assert worker["group_name"] == "production"
+        worker_headers = {"Authorization": f"Bearer {worker_token}"}
+
+        register = client.post(
+            "/api/saas/internal/render/register",
+            headers=worker_headers,
+            json={
+                "name": "managed-mini",
+                "host": "managed-mini.local",
+                "platform": "macOS",
+                "machine": "arm64",
+                "slots_total": 2,
+                "capabilities": ["musetalk"],
+                "versions": {"python": "3.11"},
+                "code_version": "0.5.0",
+                "model_version": "musetalk-mlx",
+                "render_contract_version": saas_settings.render_contract_version,
+            },
+        )
+        assert register.status_code == 200, register.text
+
+        heartbeat = client.post(
+            "/api/saas/internal/render/heartbeat",
+            headers=worker_headers,
+            json={
+                "disk_free_bytes": 100 * 1024**3,
+                "memory_available_mb": 8192,
+                "cpu_percent": 42.5,
+                "memory_percent": 51.25,
+            },
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
+        payload = heartbeat.json()["worker"]
+        assert payload["cpu_percent"] == 42.5
+        assert payload["memory_percent"] == 51.25
+
+        with SessionLocal() as db:
+            node = db.get(WorkerNode, worker["id"])
+            assert node is not None
+            assert node.group_name == "production"
+            sample = db.scalar(
+                select(WorkerHeartbeatSample).where(
+                    WorkerHeartbeatSample.node_id == worker["id"]
+                )
+            )
+            assert sample is not None
+            assert sample.cpu_percent == 42.5
+            assert sample.memory_percent == 51.25
+
+        overview = client.get("/api/saas/admin/workers/overview", headers=_headers(token))
+        assert overview.status_code == 200, overview.text
+        assert overview.json()["groups"]["production"]["total"] >= 1
+
+        edited = client.patch(
+            f"/api/saas/admin/workers/{worker['id']}",
+            headers=_headers(token),
+            json={
+                "name": "managed-mini-renamed",
+                "group_name": "mac-cluster",
+                "slots_total": 2,
+                "notes": "primary production Mac",
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["name"] == "managed-mini-renamed"
+        assert edited.json()["group_name"] == "mac-cluster"
+        assert edited.json()["notes"] == "primary production Mac"
+
+        detail = client.get(
+            f"/api/saas/admin/workers/{worker['id']}",
+            headers=_headers(token),
+        )
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["worker"]["group_name"] == "mac-cluster"
+        assert detail.json()["health_series"]
+
+        with SessionLocal() as db:
+            node = db.get(WorkerNode, worker["id"])
+            assert node is not None
+            node.slots_busy = 2
+            db.commit()
+
+        too_low = client.patch(
+            f"/api/saas/admin/workers/{worker['id']}",
+            headers=_headers(token),
+            json={"slots_total": 1},
+        )
+        assert too_low.status_code == 409
