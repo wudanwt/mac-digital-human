@@ -78,9 +78,29 @@ A single value remains valid, so existing Mac-only deployments do not change.
 
 ## Start
 
+First start on a newly provisioned machine:
+
 ```bash
 bash scripts/saas/start_remote_page_worker_cuda.sh
 ```
+
+After restoring a saved cloud snapshot, prefer the snapshot-safe resume command:
+
+```bash
+bash scripts/cloud/resume_cuda_worker.sh
+```
+
+Use `--check-only` to sync/check without starting the Worker. The resume command intentionally never runs pip, conda, apt, model setup or runtime setup; it fails clearly when a saved dependency is missing instead of modifying a known-good snapshot.
+
+The CUDA startup path also probes installed FFmpeg binaries. This matters on cloud images where an activated Conda environment can shadow `/usr/bin/ffmpeg` with a build that cannot use NVENC. The selector tests the current binary, `/usr/bin/ffmpeg`, `/usr/local/bin/ffmpeg` and other known candidates with a real one-frame `h264_nvenc` encode, then puts the first working binary at the front of PATH.
+
+For a dedicated NVIDIA production worker you can make software fallback a startup error:
+
+```env
+CUDA_REQUIRE_NVENC=1
+```
+
+When NVENC is unavailable, `check_musetalk_cuda.sh` prints the exact FFmpeg smoke-test error and NVIDIA encode-library visibility instead of silently hiding the reason.
 
 The startup script verifies the official MuseTalk CUDA environment and also requires CUDA to be visible in the main Worker Python so TTS does not silently fall back to CPU.
 
@@ -142,9 +162,12 @@ MUSETALK_CUDA_MASTER_CACHE_CPU_GB=6
 MUSETALK_CUDA_MASTER_CACHE_GPU_GB=4
 MUSETALK_CUDA_RESIDENT_START_TIMEOUT=240
 MUSETALK_CUDA_RESIDENT_REQUEST_TIMEOUT=1800
+MUSETALK_CUDA_FAST_BLEND=1
 ```
 
 The first page for a master video is a cache miss and prepares the master. Later pages using the same frozen master asset reuse the cached frames, coordinates, masks and VAE latents. Cache entries are LRU-evicted by both item count and memory budget; the newest entry is retained even if a single large master exceeds a budget.
+
+CUDA V3 also defaults to NumPy alpha blending for the cached face mask. It preserves the same precomputed MuseTalk mask but avoids per-frame full-image PIL conversion/paste overhead. Set `MUSETALK_CUDA_FAST_BLEND=0` to return to the upstream PIL blending implementation for visual comparison or rollback.
 
 Per-page CUDA metrics include `master_cache_hit`, `master_prepare_seconds`, cache hit/miss/eviction counters, cache CPU/GPU estimates, resident uptime, and resident model-load time. On a cache hit, source decode, landmark, latent preparation and blend-material preparation report zero for that page.
 
