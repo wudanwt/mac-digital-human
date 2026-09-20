@@ -109,6 +109,10 @@ def main() -> int:
     sys.path.insert(0, str(root))
     os.chdir(root)
 
+    metrics: dict[str, object] = {}
+    total_started = _timer()
+    import_started = _timer()
+
     import cv2
     import numpy as np
     import torch
@@ -121,8 +125,7 @@ def main() -> int:
     from musetalk.utils.preprocessing import coord_placeholder, get_landmark_and_bbox
     from musetalk.utils.utils import datagen, get_video_fps, load_all_model
 
-    metrics: dict[str, object] = {}
-    total_started = _timer()
+    metrics["runtime_import_seconds"] = round(_timer() - import_started, 4)
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
         raise RuntimeError("MuseTalk CUDA streaming runner cannot see CUDA")
