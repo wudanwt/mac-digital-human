@@ -8,6 +8,7 @@ __pycache__/
 /vendor/
 !digital-human-tts/vendor/
 models/
+!digital-human-tts/vendor/CosyVoice/third_party/Matcha-TTS/matcha/models/
 workspace/
 outputs/
 .cache/
