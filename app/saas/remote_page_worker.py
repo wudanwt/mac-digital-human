@@ -301,6 +301,7 @@ class RemoteApi:
                     "speech-preview",
                     "portrait-matting",
                     "transparent-avatar-compose",
+                    "script-media-cues",
                 ],
                 "versions": {"python": platform.python_version()},
                 "code_version": self.config.code_version,
