@@ -52,7 +52,10 @@ def test_apply_all_updates_the_mode_map_used_by_the_save_wrapper(tmp_path: Path)
     harness.write_text(
         f"""
 global.window = {{
-  fetch: async (_input, init={{}}) => {{ global.savedBody = init.body; return {{ok:true}}; }},
+  fetch: async (input, init={{}}) => {{
+    if (String(init.method||'GET').toUpperCase() === 'PATCH') global.savedBody = init.body;
+    return {{ok:true, clone:()=>({{json:async()=>course}})}};
+  }},
   openCourseStudio: course => {{ window.__courseStudioSlides = course.script; }}
 }};
 global.document = {{
@@ -60,7 +63,7 @@ global.document = {{
   addEventListener: () => {{}},
   querySelector: selector => selector === '[data-layout-slide].active' ? {{dataset:{{layoutSlide:'1'}}}} : null,
   querySelectorAll: selector => selector === '[data-layout-slide]' ? [{{}}, {{}}] : [],
-  getElementById: () => null
+  getElementById: id => id === 'courseStudioShell' ? {{}} : null
 }};
 global.MutationObserver = class {{ observe() {{}} }};
 global.setTimeout = () => 1;
@@ -74,10 +77,15 @@ window.openCourseStudio(course);
 const mode = window.__courseAvatarModeCurrent();
 window.__courseAvatarModeApplyAll(mode);
 if (course.script.some(slide => slide.avatar_mode !== 'transparent')) throw new Error('slide state was not updated');
-window.fetch('/api/saas/courses/course-1', {{method:'PATCH', body:JSON.stringify({{script:course.script}})}}).then(() => {{
+(async () => {{
+  // The background editor performs this GET before its PATCH. It must not
+  // reseed the live mode map from the stale server snapshot.
+  await window.fetch('/api/saas/courses/course-1');
+  await Promise.resolve();
+  await window.fetch('/api/saas/courses/course-1', {{method:'PATCH', body:JSON.stringify({{script:course.script}})}});
   const saved = JSON.parse(global.savedBody);
   if (saved.script.some(slide => slide.avatar_mode !== 'transparent')) throw new Error('save wrapper restored stale modes');
-}}).catch(error => {{ console.error(error); process.exit(1); }});
+}})().catch(error => {{ console.error(error); process.exit(1); }});
 """,
         encoding="utf-8",
     )

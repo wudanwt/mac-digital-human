@@ -69,7 +69,10 @@ JS = r'''
       }
     }
     const response=await nativeFetch(input,init);
-    if(match&&method==='GET'&&match[1]&&response.ok&&document.getElementById('courseStudioShell'))response.clone().json().then(seedCourse).catch(()=>{});
+    // Background persistence reads the current course before PATCHing it. Do
+    // not let that advisory GET replace unsaved avatar-mode edits with the
+    // older server snapshot while the studio is open.
+    if(match&&method==='GET'&&match[1]&&response.ok&&document.getElementById('courseStudioShell')&&!state.modes.has(match[1]))response.clone().json().then(seedCourse).catch(()=>{});
     if(match&&method==='POST'&&!match[1]&&response.ok)response.clone().json().then(c=>{if(!c?.id)return;const old=state.modes.get('__new__');state.activeKey=c.id;if(old){state.modes.set(c.id,old);state.modes.delete('__new__')}if(c.avatar_id)state.activeAvatar=c.avatar_id}).catch(()=>{});
     return response;
   };
