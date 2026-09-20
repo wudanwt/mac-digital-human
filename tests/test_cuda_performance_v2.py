@@ -47,3 +47,34 @@ def test_cuda_streaming_is_isolated_and_has_upstream_fallback(monkeypatch):
     assert "pipe:0" in source
     assert "cv2.imwrite" not in source
     assert "h264_nvenc" in source
+
+
+
+def test_cuda_resident_v3_defaults_and_can_be_disabled(monkeypatch):
+    monkeypatch.delenv("MUSETALK_CUDA_RESIDENT", raising=False)
+    monkeypatch.delenv("MUSETALK_CUDA_MASTER_CACHE_ITEMS", raising=False)
+    engine = MuseTalkCUDAEngine()
+    try:
+        assert engine.resident is True
+        assert engine.master_cache_items == 2
+        assert engine.resident_runner.name == "musetalk_cuda_resident.py"
+    finally:
+        engine.close()
+
+    monkeypatch.setenv("MUSETALK_CUDA_RESIDENT", "0")
+    disabled = MuseTalkCUDAEngine()
+    try:
+        assert disabled.resident is False
+        assert disabled.streaming is True
+    finally:
+        disabled.close()
+
+
+def test_resident_runtime_uses_clean_json_protocol_and_master_cache():
+    source = Path("scripts/cloud/musetalk_cuda_resident.py").read_text(encoding="utf-8")
+    assert "_PROTOCOL_OUT = sys.stdout" in source
+    assert "sys.stdout = sys.stderr" in source
+    assert "master_cache_hit" in source
+    assert "latent_prepare_seconds" in source
+    assert "blend_material_prepare_seconds" in source
+    assert "OrderedDict" in source
