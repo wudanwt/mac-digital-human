@@ -5,12 +5,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auxiliary_task_models import AuxiliaryTaskLease
 from .database import get_db
-from .distributed_render_models import RenderAttempt, RenderSubtask, WorkerNode
+from .distributed_render_models import (
+    RenderAttempt,
+    RenderSubtask,
+    WorkerHeartbeatSample,
+    WorkerNode,
+)
 from .models import RenderJobRecord
 from .security import Principal, require_superuser
 from .settings import saas_settings
@@ -18,6 +24,13 @@ from .worker_status_api import _legacy_status
 
 
 router = APIRouter(prefix="/admin/workers", tags=["admin-worker-management"])
+
+
+class WorkerUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    group_name: str | None = Field(default=None, max_length=80)
+    slots_total: int | None = Field(default=None, ge=1, le=4)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 def _now() -> datetime:
@@ -73,6 +86,8 @@ def _serialize_node(node: WorkerNode, *, now: datetime | None = None) -> dict[st
     return {
         "id": node.id,
         "name": node.name,
+        "group_name": node.group_name or "default",
+        "notes": node.notes or "",
         "status": node.status,
         **runtime,
         "accepting_tasks": node.accepting_tasks,
@@ -90,6 +105,8 @@ def _serialize_node(node: WorkerNode, *, now: datetime | None = None) -> dict[st
         "last_error": node.last_error,
         "disk_free_bytes": node.disk_free_bytes,
         "memory_available_mb": node.memory_available_mb,
+        "cpu_percent": node.cpu_percent,
+        "memory_percent": node.memory_percent,
         "last_seen_at": node.last_seen_at.isoformat() if node.last_seen_at else None,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
@@ -149,6 +166,31 @@ def _attempt_payload(
     }
 
 
+def _period_stats(db: Session, node_id: str, *, since: datetime, now: datetime) -> dict[str, Any]:
+    attempts = db.scalars(
+        select(RenderAttempt)
+        .where(RenderAttempt.node_id == node_id, RenderAttempt.claimed_at >= since)
+        .order_by(RenderAttempt.claimed_at.desc())
+    ).all()
+    succeeded = [item for item in attempts if item.status == "succeeded"]
+    failed = [item for item in attempts if item.status == "failed"]
+    running = [item for item in attempts if item.status == "running"]
+    durations = [
+        value
+        for item in succeeded
+        if (value := _duration_seconds(item.claimed_at, item.completed_at, now=now)) is not None
+    ]
+    terminal = len(succeeded) + len(failed)
+    return {
+        "attempts": len(attempts),
+        "succeeded": len(succeeded),
+        "failed": len(failed),
+        "running": len(running),
+        "success_rate": round(len(succeeded) / max(1, terminal) * 100, 1),
+        "average_success_seconds": round(sum(durations) / len(durations), 1) if durations else None,
+    }
+
+
 @router.get("/overview")
 def worker_overview(
     principal: Annotated[Principal, Depends(require_superuser)],
@@ -193,23 +235,51 @@ def worker_overview(
         or 0
     )
     legacy_engines = _legacy_status()
-    legacy_online_count = sum(int(item.get("count") or 0) for item in legacy_engines.values() if item.get("online"))
+    legacy_online_count = sum(
+        int(item.get("count") or 0)
+        for item in legacy_engines.values()
+        if item.get("online")
+    )
+
+    groups: dict[str, dict[str, int]] = {}
+    for worker in workers:
+        group = str(worker.get("group_name") or "default")
+        bucket = groups.setdefault(group, {"total": 0, "online": 0, "busy": 0, "warning": 0})
+        bucket["total"] += 1
+        if worker["online"]:
+            bucket["online"] += 1
+        if worker["effective_status"] == "busy":
+            bucket["busy"] += 1
+        if worker["effective_status"] in {"disk_low", "incompatible"}:
+            bucket["warning"] += 1
+
     return {
         "render_contract_version": saas_settings.render_contract_version,
         "legacy_engines": legacy_engines,
+        "groups": groups,
         "summary": {
             "total": len(workers),
             "visible_total": len(workers) + legacy_online_count,
             "legacy_online": legacy_online_count,
-            "registered": sum(1 for item in workers if item["effective_status"] not in {"revoked", "pending"}),
+            "registered": sum(
+                1 for item in workers if item["effective_status"] not in {"revoked", "pending"}
+            ),
             "online": sum(1 for item in workers if item["online"]),
             "busy": statuses.count("busy"),
             "draining": statuses.count("draining"),
             "offline": statuses.count("offline"),
             "warning": sum(1 for status in statuses if status in {"disk_low", "incompatible"}),
             "pending": statuses.count("pending"),
-            "slots_total": sum(int(item["slots_total"] or 0) for item in workers if item["effective_status"] != "revoked"),
-            "slots_busy": sum(int(item["slots_busy"] or 0) for item in workers if item["effective_status"] != "revoked"),
+            "slots_total": sum(
+                int(item["slots_total"] or 0)
+                for item in workers
+                if item["effective_status"] != "revoked"
+            ),
+            "slots_busy": sum(
+                int(item["slots_busy"] or 0)
+                for item in workers
+                if item["effective_status"] != "revoked"
+            ),
             "queued_tasks": queued_tasks,
             "running_attempts": running_attempts,
             "completed_24h": completed_24h,
@@ -217,6 +287,35 @@ def worker_overview(
         },
         "workers": workers,
     }
+
+
+@router.patch("/{node_id}")
+def update_worker(
+    node_id: str,
+    body: WorkerUpdateRequest,
+    principal: Annotated[Principal, Depends(require_superuser)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    del principal
+    node = db.get(WorkerNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Worker node not found")
+    if body.name is not None:
+        node.name = body.name.strip()
+    if body.group_name is not None:
+        node.group_name = body.group_name.strip() or "default"
+    if body.slots_total is not None:
+        if body.slots_total < node.slots_busy:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Worker currently uses {node.slots_busy} slots; slots_total cannot be lower",
+            )
+        node.slots_total = body.slots_total
+    if body.notes is not None:
+        node.notes = body.notes.strip()
+    db.commit()
+    db.refresh(node)
+    return _serialize_node(node)
 
 
 @router.get("/{node_id}")
@@ -236,7 +335,7 @@ def worker_detail(
         .join(RenderSubtask, RenderSubtask.id == RenderAttempt.subtask_id)
         .where(RenderAttempt.node_id == node_id)
         .order_by(RenderAttempt.claimed_at.desc())
-        .limit(50)
+        .limit(100)
     ).all()
     parent_ids = {task.parent_job_id for _attempt, task in rows}
     jobs = {
@@ -258,26 +357,20 @@ def worker_detail(
         .limit(20)
     ).all()
 
-    successful = sum(1 for item in recent_attempts if item["status"] == "succeeded")
-    failed = sum(1 for item in recent_attempts if item["status"] == "failed")
-    completed_durations = [
-        float(item["duration_seconds"])
-        for item in recent_attempts
-        if item["duration_seconds"] is not None and item["status"] == "succeeded"
-    ]
+    samples = db.scalars(
+        select(WorkerHeartbeatSample)
+        .where(
+            WorkerHeartbeatSample.node_id == node_id,
+            WorkerHeartbeatSample.created_at >= now - timedelta(hours=2),
+        )
+        .order_by(WorkerHeartbeatSample.created_at.asc())
+        .limit(240)
+    ).all()
+
     return {
         "worker": _serialize_node(node, now=now),
-        "summary": {
-            "recent_attempts": len(recent_attempts),
-            "recent_succeeded": successful,
-            "recent_failed": failed,
-            "success_rate": round(successful / max(1, successful + failed) * 100, 1),
-            "average_success_seconds": (
-                round(sum(completed_durations) / len(completed_durations), 1)
-                if completed_durations
-                else None
-            ),
-        },
+        "stats_24h": _period_stats(db, node_id, since=now - timedelta(hours=24), now=now),
+        "stats_7d": _period_stats(db, node_id, since=now - timedelta(days=7), now=now),
         "active_auxiliary_tasks": [
             {
                 "lease_id": lease.id,
@@ -288,6 +381,19 @@ def worker_detail(
             }
             for lease in auxiliary
             if (_utc(lease.expires_at) or now) > now
+        ],
+        "health_series": [
+            {
+                "created_at": sample.created_at.isoformat() if sample.created_at else None,
+                "status": sample.status,
+                "slots_busy": sample.slots_busy,
+                "current_task_id": sample.current_task_id,
+                "cpu_percent": sample.cpu_percent,
+                "memory_percent": sample.memory_percent,
+                "memory_available_mb": sample.memory_available_mb,
+                "disk_free_bytes": sample.disk_free_bytes,
+            }
+            for sample in samples
         ],
         "recent_attempts": recent_attempts,
     }
