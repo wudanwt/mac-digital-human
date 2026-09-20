@@ -20,6 +20,8 @@ set +a
 : "${REMOTE_WORKER_TOKEN:?REMOTE_WORKER_TOKEN is required on Linux CUDA workers}"
 
 export REMOTE_WORKER_RENDER_BACKEND=cuda
+export REMOTE_WORKER_AUXILIARY_MODE="${REMOTE_WORKER_AUXILIARY_MODE:-fallback}"
+export REMOTE_WORKER_AUXILIARY_FALLBACK_SECONDS="${REMOTE_WORKER_AUXILIARY_FALLBACK_SECONDS:-8}"
 export REMOTE_WORKER_MODEL_VERSION="${REMOTE_WORKER_MODEL_VERSION:-musetalk-cuda}"
 export SAAS_TTS_PREFETCH=0
 export VIDEO_ENCODER_BACKEND="${VIDEO_ENCODER_BACKEND:-auto}"
@@ -51,6 +53,8 @@ echo "Master cache GPU GB      : $MUSETALK_CUDA_MASTER_CACHE_GPU_GB"
 echo "Fast blend               : $MUSETALK_CUDA_FAST_BLEND"
 echo "FFmpeg binary            : $(command -v ffmpeg)"
 echo "CUDA FFmpeg NVENC        : ${CUDA_SELECTED_FFMPEG_NVENC:-0}"
+echo "Auxiliary routing        : $REMOTE_WORKER_AUXILIARY_MODE"
+echo "Aux fallback seconds     : $REMOTE_WORKER_AUXILIARY_FALLBACK_SECONDS"
 
 PYTHON="${CUDA_WORKER_PYTHON:-$ROOT/.venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
