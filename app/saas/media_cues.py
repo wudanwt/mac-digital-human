@@ -38,6 +38,7 @@ class ResolvedMediaCue:
     enter_transition: str
     exit_transition: str
     overlay_position: str
+    overlay_box: dict[str, float] | None = None
     alignment_quality: str = "estimated"
 
     @property
@@ -73,6 +74,25 @@ def _speech_weight_char(char: str) -> float:
 
 def _speech_weight(text: str) -> float:
     return max(0.0, sum(_speech_weight_char(char) for char in text))
+
+
+def _normalize_overlay_box(raw: Any) -> dict[str, float] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        x = float(raw.get("x"))
+        y = float(raw.get("y"))
+        w = float(raw.get("w"))
+        h = float(raw.get("h"))
+    except (TypeError, ValueError):
+        return None
+    if x < 0 or y < 0 or w <= 0 or h <= 0:
+        return None
+    if x > 1 or y > 1 or w > 1 or h > 1:
+        return None
+    if x + w > 1.000001 or y + h > 1.000001:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
 
 
 def _anchor_offsets(narration: str, anchor: Mapping[str, Any]) -> tuple[int, int]:
@@ -149,6 +169,8 @@ def validate_media_cue_definitions(raw_cues: Any, *, narration: str) -> list[str
         audio_mode = str(raw.get("audio_mode") or "mute").strip().lower()
         if media_type == "image" and audio_mode == "original":
             issues.append(f"内容镜头 {cue_id} 是图片，不能使用素材原声替代讲解")
+        if raw.get("overlay_box") is not None and _normalize_overlay_box(raw.get("overlay_box")) is None:
+            issues.append(f"内容镜头 {cue_id} 的画中画坐标无效")
 
     ranges.sort()
     for previous, current in zip(ranges, ranges[1:]):
@@ -228,6 +250,7 @@ def resolve_media_cue_timeline(
         position = str(raw.get("overlay_position") or "right_top").strip().lower()
         if position not in _OVERLAY_POSITIONS:
             position = "right_top"
+        overlay_box = _normalize_overlay_box(raw.get("overlay_box"))
 
         try:
             source_start = max(0.0, float(raw.get("source_start_ms") or 0) / 1000.0)
@@ -257,6 +280,7 @@ def resolve_media_cue_timeline(
                 enter_transition=enter,
                 exit_transition=exit_,
                 overlay_position=position,
+                overlay_box=overlay_box,
             )
         )
 
@@ -342,8 +366,14 @@ def _cue_box(
             return 0, 0, config.width, config.height
         return _box_from_fraction(ppt_box, width=config.width, height=config.height)
 
-    # Keep picture-in-picture intentionally simple in V1. The box preserves
-    # the source aspect ratio internally via scale+pad.
+    if cue.overlay_box is not None:
+        return _box_from_fraction(
+            cue.overlay_box,
+            width=config.width,
+            height=config.height,
+        )
+
+    # Legacy preset fallback for courses created before freeform cue layout.
     w = int(config.width * 0.34)
     h = int(config.height * 0.34)
     w -= w % 2
@@ -489,6 +519,8 @@ def apply_media_cues(
                 "display_mode": cue.display_mode,
                 "audio_mode": cue.audio_mode,
                 "alignment_quality": cue.alignment_quality,
+                "box_pixels": [x, y, w, h],
+                "overlay_box": cue.overlay_box,
             }
         )
 
