@@ -18,6 +18,12 @@ def test_script_media_cue_prototype_is_exposed_in_script_review() -> None:
     assert "updateMediaCuePreviewButton" in JS
     assert "runMediaCuePreview" in JS
     assert "正在准备预览" in JS
+    assert 'id="studioMediaCueLayer"' in JS
+    assert 'data-layer-tab="media"' in JS
+    assert "activeMediaCueId" in JS
+    assert "overlay_box" in JS
+    assert "自由画中画" in JS
+    assert "可直接在左侧画布拖动内容镜头" in JS
 
 
 def test_script_media_cue_ui_describes_automatic_render_timeline() -> None:
