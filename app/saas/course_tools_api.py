@@ -384,6 +384,11 @@ def course_readiness(
                     continue
                 if cue_asset.kind not in {"video", "image", "background"}:
                     issues.append(f"第 {slide_index} 页内容镜头素材类型不支持")
+                    continue
+                declared_type = str(cue.get("media_type") or "").strip().lower()
+                actual_type = "video" if cue_asset.kind == "video" else "image"
+                if declared_type and declared_type != actual_type:
+                    issues.append(f"第 {slide_index} 页内容镜头素材类型与配置不一致")
 
     return {
         "course_id": course.id,
