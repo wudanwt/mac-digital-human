@@ -36,6 +36,13 @@ JS = r'''
       if(slide)slide.avatar_mode=mode;
     }
   }
+  function applyModeAll(mode=currentMode()){
+    const resolved=validModes.has(mode)?mode:'original';
+    for(let i=1;i<=totalSlides();i++)setMode(i,resolved);
+    return resolved;
+  }
+  window.__courseAvatarModeCurrent=()=>currentMode();
+  window.__courseAvatarModeApplyAll=mode=>applyModeAll(mode);
   function dirty(){const e=document.getElementById('studioSaveState');if(e)e.textContent='有未保存更改'}
 
   function seedCourse(course){
@@ -86,7 +93,7 @@ JS = r'''
     const avatarId=selectedAvatarId();if(mode!=='original'){
       const s=await matting(avatarId,true);if(!s?.transparent_ready){if(s?.status==='queued'||s?.status==='running')toast('透明资产正在处理中，完成后即可使用');else toast('请先生成这个数字人的透明资产');await patchControls();return}
     }
-    if(all){for(let i=1;i<=totalSlides();i++)setMode(i,mode)}else setMode(slideIndex(),mode);dirty();await patchControls();await applyPreview();
+    if(all)applyModeAll(mode);else setMode(slideIndex(),mode);dirty();await patchControls();await applyPreview();
   }
 
   async function ensureMatting(){const avatarId=selectedAvatarId();if(!avatarId)return toast('请先选择数字人');try{const s=await api('/avatar-matting/'+avatarId+'/ensure',{method:'POST'});state.matting.set(avatarId,s);toast('透明资产已加入处理队列');pollMatting(avatarId);await patchControls()}catch(e){toast(e.message)}}
@@ -104,15 +111,6 @@ JS = r'''
     </div><div class="avatar-mode-readiness ${ready?'ok':s?.status==='failed'?'bad':''}">${html(status)}${s?.error?` · ${html(s.error)}`:''}</div>
     ${!ready&&!['queued','running'].includes(s?.status)?'<button type="button" class="secondary avatar-mode-make">生成透明讲师资产</button>':''}
     <button type="button" class="secondary avatar-mode-apply">将当前模式应用到全部页面</button>`;
-    const applyAll=document.getElementById('applyAllLayout');
-    if(applyAll&&!applyAll.dataset.avatarModeAll){
-      applyAll.dataset.avatarModeAll='1';
-      applyAll.addEventListener('click',()=>{
-        const mode=currentMode();
-        for(let i=1;i<=totalSlides();i++)setMode(i,mode);
-        dirty();
-      });
-    }
     await applyPreview();
   }
 

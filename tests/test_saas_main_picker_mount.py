@@ -16,3 +16,5 @@ def test_course_picker_assets_are_served_and_injected() -> None:
         assert "api('/digital-humans')" in js.text
         assert '/course-studio-asset-picker.css' in page.text
         assert '/course-studio-asset-picker.js' in page.text
+        assert '/course-studio.js?v=20260920-2' in page.text
+        assert '/course-avatar-mode.js?v=20260920-2' in page.text
