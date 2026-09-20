@@ -13,6 +13,7 @@ def test_script_media_cue_prototype_is_exposed_in_script_review() -> None:
     assert "画中画" in JS
 
 
-def test_script_media_cue_prototype_warns_before_render() -> None:
-    assert "当前分支只验证交互与草稿保存" in JS
-    assert "最终成片暂不应用这些镜头" in JS
+def test_script_media_cue_ui_describes_automatic_render_timeline() -> None:
+    assert "实际页面音频时长自动计算切入与退出时间" in JS
+    assert "将按讲稿位置自动切换并合成到最终成片" in JS
+    assert "最终成片暂不应用这些镜头" not in JS
