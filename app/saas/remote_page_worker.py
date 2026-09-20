@@ -177,6 +177,12 @@ class RemoteWorkerConfig:
         )
 
 
+class RemoteApiError(RuntimeError):
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class LeaseLost(RuntimeError):
     pass
 
@@ -295,7 +301,7 @@ class RemoteApi:
             detail = payload.get("detail") if isinstance(payload, dict) else payload
         except Exception:
             detail = response.text
-        raise RuntimeError(f"center API {response.status_code}: {detail}")
+        raise RemoteApiError(f"center API {response.status_code}: {detail}", status_code=response.status_code)
 
     def register(self) -> dict[str, Any]:
         response = self.control_client.post(
@@ -820,12 +826,20 @@ class ContentCache:
 
 
 class LeaseKeeper:
-    def __init__(self, api: RemoteApi, task: dict[str, Any], interval: int) -> None:
+    def __init__(
+        self,
+        api: RemoteApi | Any,
+        task: dict[str, Any],
+        interval: int,
+        grace_period_seconds: float = 90.0,
+    ) -> None:
         self.api = api
         self.task = task
-        self.interval = max(3, interval)
+        self.interval = max(0.01, float(interval))
+        self.grace_period_seconds = max(0.01, float(grace_period_seconds))
         self.stop_event = threading.Event()
         self.lost_event = threading.Event()
+        self.last_success_at = time.monotonic()
         self.thread = threading.Thread(
             target=self._loop,
             name=f"lease-{task['id']}",
@@ -833,13 +847,65 @@ class LeaseKeeper:
         )
 
     def _loop(self) -> None:
+        fail_count = 0
         while not self.stop_event.wait(self.interval):
             try:
                 self.api.renew(self.task)
+                if fail_count > 0:
+                    log.info(
+                        "lease renew recovered after %d failures task=%s",
+                        fail_count,
+                        self.task["id"],
+                    )
+                    fail_count = 0
+                self.last_success_at = time.monotonic()
+            except RemoteApiError as exc:
+                if exc.status_code in {404, 409}:
+                    log.error(
+                        "lease renew rejected with status %s task=%s error=%s",
+                        exc.status_code,
+                        self.task["id"],
+                        exc,
+                    )
+                    self.lost_event.set()
+                    return
+                fail_count += 1
+                elapsed = time.monotonic() - self.last_success_at
+                log.warning(
+                    "lease renew transient error (attempt %d, elapsed %.1fs) task=%s: %s",
+                    fail_count,
+                    elapsed,
+                    self.task["id"],
+                    exc,
+                )
+                if elapsed >= self.grace_period_seconds:
+                    log.error(
+                        "lease renew grace period exceeded (%.1fs >= %.1fs) task=%s",
+                        elapsed,
+                        self.grace_period_seconds,
+                        self.task["id"],
+                    )
+                    self.lost_event.set()
+                    return
             except Exception as exc:  # noqa: BLE001
-                log.error("lease renew failed task=%s error=%s", self.task["id"], exc)
-                self.lost_event.set()
-                return
+                fail_count += 1
+                elapsed = time.monotonic() - self.last_success_at
+                log.warning(
+                    "lease renew network error (attempt %d, elapsed %.1fs) task=%s: %s",
+                    fail_count,
+                    elapsed,
+                    self.task["id"],
+                    exc,
+                )
+                if elapsed >= self.grace_period_seconds:
+                    log.error(
+                        "lease renew grace period exceeded (%.1fs >= %.1fs) task=%s",
+                        elapsed,
+                        self.grace_period_seconds,
+                        self.task["id"],
+                    )
+                    self.lost_event.set()
+                    return
 
     def __enter__(self) -> "LeaseKeeper":
         self.thread.start()

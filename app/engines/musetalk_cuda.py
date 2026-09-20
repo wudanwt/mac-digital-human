@@ -47,6 +47,14 @@ class MuseTalkCUDAEngine:
         explicit = os.getenv("MUSETALK_CUDA_PYTHON", "").strip()
         if explicit:
             return [explicit]
+        candidates = [
+            settings.root / ".venv-musetalk-cuda" / "bin" / "python",
+            self.repo.parent / ".venv-musetalk-cuda" / "bin" / "python",
+            self.repo / ".venv" / "bin" / "python",
+        ]
+        for path in candidates:
+            if path.is_file() and os.access(path, os.X_OK):
+                return [str(path)]
         conda = shutil.which("conda")
         if conda and self.conda_env:
             return [conda, "run", "--no-capture-output", "-n", self.conda_env, "python"]

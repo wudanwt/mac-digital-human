@@ -50,7 +50,7 @@ if ! command -v ffmpeg >/dev/null; then
   say "Installing ffmpeg"
   if command -v apt-get >/dev/null; then
     apt-get update -y
-    apt-get install -y ffmpeg
+    apt-get install -y ffmpeg fonts-noto-cjk
   else
     fail "ffmpeg missing and apt-get unavailable. Install ffmpeg manually."
   fi

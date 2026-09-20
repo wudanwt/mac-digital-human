@@ -12,6 +12,11 @@ say() { printf '\n==> %s\n' "$*"; }
 
 command -v git >/dev/null 2>&1 || fail "git not found"
 
+if command -v apt-get >/dev/null 2>&1; then
+  say "Ensuring system packages and CJK fonts are installed"
+  apt-get update -qq && apt-get install -y -qq fonts-noto-cjk ffmpeg
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   say "Installing uv bootstrap tool"
   BOOTSTRAP_PYTHON=""

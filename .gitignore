@@ -48,3 +48,4 @@ test_*.py
 !tests/test_storage_s3_credentials.py
 !tests/test_distributed_finalize_fast_path.py
 !tests/test_avatar_matting_geometry.py
+!tests/test_lease_keeper.py
