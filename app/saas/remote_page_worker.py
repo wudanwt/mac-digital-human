@@ -317,6 +317,12 @@ class RemoteApi:
         ]
         if encoder is not None:
             capabilities.append(f"video-encoder:{encoder['selected']}")
+            resident_enabled = os.getenv("MUSETALK_CUDA_RESIDENT", "1").strip().lower() not in {
+                "0", "false", "no", "off"
+            }
+            capabilities.append(
+                "musetalk-runtime:resident-v3" if resident_enabled else "musetalk-runtime:streaming-v2"
+            )
         response = self.control_client.post(
             self._url("register"),
             json={
@@ -329,7 +335,19 @@ class RemoteApi:
                 "versions": {
                     "python": platform.python_version(),
                     "musetalk_backend": self.config.render_backend,
-                    **({"video_encoder": str(encoder["selected"])} if encoder is not None else {}),
+                    **(
+                        {
+                            "video_encoder": str(encoder["selected"]),
+                            "musetalk_runtime": (
+                                "resident-v3"
+                                if os.getenv("MUSETALK_CUDA_RESIDENT", "1").strip().lower()
+                                not in {"0", "false", "no", "off"}
+                                else "streaming-v2"
+                            ),
+                        }
+                        if encoder is not None
+                        else {}
+                    ),
                 },
                 "code_version": self.config.code_version,
                 "model_version": self.config.model_version,
