@@ -1013,9 +1013,19 @@ class RemotePageWorker:
         work = RenderWorkspace.create(
             app_settings.workspace_dir / "remote-page-worker" / task["attempt_id"]
         )
+        download_started = time.time()
         files = self._download_inputs(task)
+        asset_download_seconds = time.time() - download_started
         lease.checkpoint()
-        self.api.progress(task, 10, "assets_ready", {"asset_count": len(files)})
+        self.api.progress(
+            task,
+            10,
+            "assets_ready",
+            {
+                "asset_count": len(files),
+                "asset_download_seconds": round(asset_download_seconds, 4),
+            },
+        )
 
         slide_artifact_id = str(payload.get("slide_artifact_id") or "")
         if not slide_artifact_id or slide_artifact_id not in files:
@@ -1114,7 +1124,12 @@ class RemotePageWorker:
                 raise ValueError("transparent/white page requires a prepared alpha asset")
             context.alpha_source = alpha_path
 
-        stage_metrics: dict[str, Any] = {}
+        stage_metrics: dict[str, Any] = {
+            "assets_ready": {
+                "asset_count": len(files),
+                "asset_download_seconds": round(asset_download_seconds, 4),
+            }
+        }
 
         def on_stage(stage: str, detail: dict[str, Any]) -> None:
             lease.checkpoint()
@@ -1176,11 +1191,18 @@ class RemotePageWorker:
                 "audio_channels": probe["audio_channels"],
             },
         }
+        render_metadata = dict(result.metadata or {})
         metrics = {
+            "asset_download_seconds": round(asset_download_seconds, 4),
             "tts_elapsed_seconds": result.tts_elapsed_seconds,
             "render_seconds": result.render_seconds,
+            "compose_seconds": result.compose_seconds,
+            "media_cue_seconds": result.media_cue_seconds,
             "audio_source": result.audio_source,
-            "media_cues": (result.metadata or {}).get("media_cues", []),
+            "video_encoder": render_metadata.get("video_encoder"),
+            "render_pipeline": render_metadata.get("pipeline"),
+            "cuda_timings": render_metadata.get("cuda_timings", {}),
+            "media_cues": render_metadata.get("media_cues", []),
             "stages": stage_metrics,
         }
         return result.segment_path, result.audio_path, media, metrics
@@ -1216,9 +1238,17 @@ class RemotePageWorker:
                 video, audio, media, metrics = self._execute(task, lease)
                 lease.checkpoint()
                 self.api.progress(task, 92, "uploading", metrics)
+                upload_audio_started = time.time()
                 self.api.upload(task, kind="page_audio", source=audio)
+                metrics["upload_audio_seconds"] = round(time.time() - upload_audio_started, 4)
                 lease.checkpoint()
+                upload_video_started = time.time()
                 self.api.upload(task, kind="page_video", source=video)
+                metrics["upload_video_seconds"] = round(time.time() - upload_video_started, 4)
+                metrics["upload_total_seconds"] = round(
+                    metrics["upload_audio_seconds"] + metrics["upload_video_seconds"],
+                    4,
+                )
                 lease.checkpoint()
                 metrics["worker_elapsed_seconds"] = round(time.time() - started, 3)
                 self.api.complete(task, metrics=metrics, media=media)
