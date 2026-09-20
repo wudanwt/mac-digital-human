@@ -228,6 +228,7 @@ def execute_page(
             narration=plan.narration,
             audio_duration=float(duration),
             ppt_box=override.get("ppt_box") or settings_payload.get("ppt_box"),
+            layout=plan.layout,
             config=getattr(composer, "config", None),
         )
         metadata["media_cues"] = cue_timeline
