@@ -31,6 +31,7 @@ if torch.cuda.is_available():
 PY
 
 printf '\n=== MuseTalk files ===\n'
+TORCH_HUB_DIR="$("$PYTHON" -c 'import torch; print(torch.hub.get_dir())')"
 required=(
   "$CUDA_VENDOR_DIR/inference.sh"
   "$CUDA_VENDOR_DIR/models/musetalkV15/unet.pth"
@@ -42,6 +43,7 @@ required=(
   "$CUDA_VENDOR_DIR/models/face-parse-bisent/resnet18-5c106cde.pth"
   "$CUDA_VENDOR_DIR/models/syncnet/latentsync_syncnet.pt"
   "$CUDA_VENDOR_DIR/musetalk/utils/face_detection/detection/sfd/sfd.pth"
+  "$TORCH_HUB_DIR/checkpoints/s3fd-619a316812.pth"
 )
 failed=0
 for path in "${required[@]}"; do

@@ -114,6 +114,10 @@ say "Downloading MuseTalk weights"
     --local-dir models/auxiliary --include "auxiliary/s3fd-619a316812.pth"
   cp models/auxiliary/auxiliary/s3fd-619a316812.pth \
     musetalk/utils/face_detection/detection/sfd/sfd.pth
+  TORCH_HUB_DIR="$("$MUSETALK_VENV/bin/python" -c 'import torch; print(torch.hub.get_dir())')"
+  mkdir -p "$TORCH_HUB_DIR/checkpoints"
+  cp models/auxiliary/auxiliary/s3fd-619a316812.pth \
+    "$TORCH_HUB_DIR/checkpoints/s3fd-619a316812.pth"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download ManyOtherFunctions/face-parse-bisent \
     --local-dir models/face-parse-bisent --include "79999_iter.pth" "resnet18-5c106cde.pth"
 )
