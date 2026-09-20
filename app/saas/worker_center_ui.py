@@ -54,6 +54,7 @@ JS = r'''
     online:'空闲',busy:'工作中',draining:'排空中',offline:'离线',pending:'等待注册',
     disk_low:'磁盘不足',incompatible:'版本不兼容',revoked:'已吊销'
   };
+  const warningLabels={cpu_high:'CPU 高负载',memory_high:'内存高负载',disk_low:'磁盘不足',incompatible:'版本不兼容'};
   let workerView={search:'',group:'all',status:'all'};
 
   const fmtBytes=value=>{
@@ -129,7 +130,7 @@ JS = r'''
       return `<tr>
         <td><div class="worker-name">${esc(w.name)}</div><div class="worker-sub">${esc(w.host||'未连接')} · <span class="code">${w.id.slice(0,10)}</span></div></td>
         <td><span class="worker-group-chip">${esc(w.group_name||'default')}</span></td>
-        <td>${statusHtml(w)}<div class="worker-sub">${w.slots_busy||0} / ${w.slots_total||1} 槽位 · ${fmtAgo(w.heartbeat_age_seconds)}</div></td>
+        <td>${statusHtml(w)}<div class="worker-sub">${w.slots_busy||0} / ${w.slots_total||1} 槽位 · ${fmtAgo(w.heartbeat_age_seconds)}</div>${(w.health_warnings||[]).length?`<div class="worker-sub worker-version-bad">${(w.health_warnings||[]).map(x=>warningLabels[x]||x).join(' · ')}</div>`:''}</td>
         <td>${capsHtml(w)}</td>
         <td><div class="worker-health">
           <div><div class="worker-health-line"><span>CPU</span><b>${fmtPct(w.cpu_percent)}</b></div>${meter(w.cpu_percent)}</div>
@@ -292,7 +293,7 @@ JS = r'''
 
   async function openWorkerDetail(id,contractVersion){
     try{
-      const d=await api('/admin/workers/'+id),w=d.worker||{},s24=d.stats_24h||{},s7=d.stats_7d||{},aux=d.active_auxiliary_tasks||[],attempts=d.recent_attempts||[],samples=d.health_series||[];
+      const d=await api('/admin/workers/'+id),w=d.worker||{},health=d.health_summary||{},s24=d.stats_24h||{},s7=d.stats_7d||{},aux=d.active_auxiliary_tasks||[],attempts=d.recent_attempts||[],samples=d.health_series||[];
       const mismatch=w.render_contract_version&&contractVersion&&w.render_contract_version!==contractVersion;
       openModal(`<div class="modal-head"><div><div class="eyebrow">WORKER NODE</div><h2 style="margin:3px 0 0">${esc(w.name||'Worker')}</h2><div class="muted"><span class="worker-group-chip">${esc(w.group_name||'default')}</span> · ${esc(w.host||'未连接')} · <span class="code">${esc(w.id||'')}</span></div></div><div class="actions"><button class="secondary" id="workerDetailEdit">编辑</button><button class="iconbtn" data-close>×</button></div></div>
         <div class="worker-detail-grid">
@@ -302,6 +303,8 @@ JS = r'''
           <div class="ops-mini"><span class="muted">24h 平均耗时</span><b>${s24.average_success_seconds==null?'—':s24.average_success_seconds+'s'}</b><small>成功任务平均</small></div>
         </div>
         <div class="worker-trends">${sparkline(samples,'cpu_percent','CPU · 近 2 小时','cpu')}${sparkline(samples,'memory_percent','内存 · 近 2 小时','memory')}</div>
+        <div class="worker-sub" style="margin-top:8px">近 2 小时样本 ${health.samples||0} · 平均 CPU ${fmtPct(health.average_cpu_percent)} · 峰值 CPU ${fmtPct(health.max_cpu_percent)} · 平均内存 ${fmtPct(health.average_memory_percent)} · 忙碌采样占比 ${fmtPct(health.busy_sample_percent)}</div>
+        ${(w.health_warnings||[]).length?`<div class="worker-warning" style="margin-top:10px">当前告警：${(w.health_warnings||[]).map(x=>warningLabels[x]||x).join('、')}</div>`:''}
         <div class="worker-layout">
           <div>
             <div class="worker-detail-section"><div class="worker-section-head"><div><h3 style="margin:0">运行信息</h3><div class="muted">Worker 最近一次注册与心跳上报</div></div></div>
