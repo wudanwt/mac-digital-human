@@ -34,10 +34,22 @@ say "Installing CUDA-enabled PyTorch for CosyVoice / matting"
 say "Installing SaaS Worker dependencies"
 "$PY" -m pip install -e '.[saas,matting,cosyvoice]'
 
-say "Pinning CUDA 11.8-compatible NumPy / ONNX Runtime"
+say "Pinning CUDA Worker compatibility stack"
+"$PY" -m pip install \
+  "numpy==1.26.4" \
+  "diffusers==0.29.0" \
+  "transformers==4.51.3" \
+  "modelscope==1.20.0" \
+  "wetext==0.0.4" \
+  "rembg==2.0.67"
+
+# CPU and GPU ONNX Runtime distributions expose the same Python module and
+# must not coexist. Remove whatever rembg/cosyvoice extras pulled in first.
 "$PY" -m pip uninstall -y onnxruntime onnxruntime-gpu >/dev/null 2>&1 || true
-"$PY" -m pip install "numpy==1.26.4"
-"$PY" -m pip install "onnxruntime-gpu==1.18.0" \
+
+# PyTorch 2.3.1 in this Worker uses CUDA 11.8/cuDNN 8. Use the matching
+# official ONNX Runtime CUDA-11 feed instead of the default CUDA-12 wheel.
+"$PY" -m pip install "onnxruntime-gpu==1.20.1" \
   --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
 
 say "Verifying ONNX Runtime CUDA provider"
