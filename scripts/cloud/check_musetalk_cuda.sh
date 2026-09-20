@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CUDA_VENDOR_DIR="${CUDA_VENDOR_DIR:-$ROOT/vendor/MuseTalk-CUDA}"
-CONDA_ENV="${MUSETALK_CONDA_ENV:-musetalk-cuda}"
+MUSETALK_VENV="${MUSETALK_CUDA_VENV:-$ROOT/.venv-musetalk-cuda}"
+PYTHON="${MUSETALK_CUDA_PYTHON:-$MUSETALK_VENV/bin/python}"
 
 printf '=== NVIDIA GPU ===\n'
 nvidia-smi --query-gpu=name,memory.total,utilization.gpu,driver_version --format=csv,noheader
@@ -11,9 +12,16 @@ nvidia-smi --query-gpu=name,memory.total,utilization.gpu,driver_version --format
 printf '\n=== FFmpeg ===\n'
 ffmpeg -version | head -n 1
 
-printf '\n=== PyTorch CUDA ===\n'
-conda run -n "$CONDA_ENV" python - <<'PY'
+if [ ! -x "$PYTHON" ]; then
+  echo "MuseTalk CUDA Python not found: $PYTHON" >&2
+  exit 1
+fi
+
+printf '\n=== MuseTalk Python ===\n'
+"$PYTHON" - <<'PY'
+import sys
 import torch
+print('python=', sys.version.split()[0])
 print('torch=', torch.__version__)
 print('cuda_available=', torch.cuda.is_available())
 print('cuda_runtime=', torch.version.cuda)
