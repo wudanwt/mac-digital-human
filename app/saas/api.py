@@ -114,6 +114,7 @@ def capabilities() -> dict:
         "distributed_direct_downloads": saas_settings.distributed_direct_downloads,
         "distributed_direct_uploads": saas_settings.distributed_direct_uploads,
         "distributed_worker_enrollment": True,
+        "worker_management_center": True,
         "distributed_auxiliary_tasks": saas_settings.distributed_render_enabled,
         "render_contract_version": saas_settings.render_contract_version,
         "resident_musetalk_runtime": True,
