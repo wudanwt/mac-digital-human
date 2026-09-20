@@ -298,8 +298,33 @@ def _claim_query(now: datetime):
             RenderSubtask.slide_index.asc(),
         )
         .with_for_update(skip_locked=True)
-        .limit(1)
+        .limit(16)
     )
+
+
+def _task_required_capabilities(task: RenderSubtask) -> set[str]:
+    payload = _json(task.payload_json, {})
+    if not isinstance(payload, dict):
+        return set()
+    required = {
+        str(value)
+        for value in (payload.get("required_capabilities") or [])
+        if value
+    }
+    # Backward-compatible defense: even if an older center did not write the
+    # explicit requirement field, a page carrying content shots must never be
+    # leased to a worker that would silently ignore them.
+    media_cues = payload.get("media_cues")
+    if isinstance(media_cues, list) and media_cues:
+        required.add("script-media-cues")
+    return required
+
+
+def _worker_capabilities(node: WorkerNode) -> set[str]:
+    values = _json(node.capabilities_json, [])
+    if not isinstance(values, list):
+        return set()
+    return {str(value) for value in values if value}
 
 
 def claim_page_task(db: Session, *, node_id: str) -> TaskLease | None:
@@ -328,7 +353,18 @@ def claim_page_task(db: Session, *, node_id: str) -> TaskLease | None:
             f"worker render contract mismatch: {node.render_contract_version} != {saas_settings.render_contract_version}"
         )
 
-    task = db.scalar(_claim_query(now))
+    candidates = db.scalars(_claim_query(now)).all()
+    if not candidates:
+        return None
+    capabilities = _worker_capabilities(node)
+    task = next(
+        (
+            candidate
+            for candidate in candidates
+            if _task_required_capabilities(candidate).issubset(capabilities)
+        ),
+        None,
+    )
     if task is None:
         return None
 
