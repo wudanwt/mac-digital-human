@@ -353,15 +353,51 @@ UI：
 
 ## 6. 数据模型
 
-建议新增独立表，而不是继续把复杂对象全部塞入 `course.script_json`。
+V1 为了保持历史课程零迁移、Local Worker / Remote Worker 同构，以及提交任务时可以直接冻结整页配置，内容镜头随对应页面存放在 `course.script_json[].media_cues` 中。
 
-### 6.1 MediaCue
+示例：
 
-```text
-media_cues
+```json
+{
+  "index": 3,
+  "narration": "这是某新能源园区储能系统的实际运行画面。",
+  "media_cues": [
+    {
+      "id": "cue_a1b2c3",
+      "asset_id": "asset_xxx",
+      "media_type": "video",
+      "display_mode": "content_area",
+      "status": "valid",
+      "anchor": {
+        "start_offset": 0,
+        "end_offset": 22,
+        "selected_text": "这是某新能源园区储能系统的实际运行画面。",
+        "prefix": "",
+        "suffix": ""
+      },
+      "source_start_ms": 12000,
+      "source_end_ms": 26000,
+      "audio_mode": "mute",
+      "audio_gain": 0.2,
+      "enter_transition": "cut",
+      "exit_transition": "cut",
+      "overlay_position": "right_top"
+    }
+  ]
+}
 ```
 
-建议字段：
+### 6.1 V1 嵌入式存储的原因
+
+- 不需要新增数据库迁移，已有课程结构保持兼容。
+- Cue 和逐页讲稿、布局天然属于同一页配置，草稿保存逻辑简单。
+- Render Snapshot 可以一次性冻结讲稿、Cue 配置和 Cue 素材 SHA-256。
+- Local Worker 与 Remote Worker 都读取同一个 `PageRenderPlan.override`，不会形成两套实现。
+- 没有 `media_cues` 的历史课程完全沿用旧渲染路径。
+
+### 6.2 独立 MediaCue 表作为后续规范化方向
+
+当后续需要独立审计、跨课程复用、模板统计、素材生命周期联动或更复杂的多人协作时，再把 Cue 规范化成独立 `media_cues` 表。届时可包含：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -384,25 +420,11 @@ media_cues
 | enter_transition | string | cut / fade |
 | exit_transition | string | cut / fade |
 | overlay_position | string? | 画中画位置 |
-| overlay_scale | float? | 画中画比例 |
 | status | string | valid / needs_review |
-| created_at | datetime | |
-| updated_at | datetime | |
-
-### 6.2 为什么独立表
-
-优点：
-
-- 素材外键与租户隔离更容易验证。
-- 可以独立查询每页内容镜头。
-- 锚点修改和状态检查不污染课程主体 JSON。
-- 将来可统计“课程用了多少视频镜头”。
-- 可支持素材替换。
-- 可以做审计、复制课程、模板化。
 
 ### 6.3 素材仍使用现有 Asset
 
-不再创建新媒体存储体系。
+不创建新的媒体存储体系。
 
 上传视频：
 
@@ -416,7 +438,7 @@ Asset.kind = "video"
 Asset.kind = "image"
 ```
 
-MediaCue 仅引用 Asset。
+Cue 只引用当前租户可访问的 Asset。生成前 API 会重新验证素材存在、状态和实际类型。
 
 ---
 
@@ -983,25 +1005,19 @@ Cue B 14s - 20s
 
 ---
 
-## 21. V1 数据迁移
+## 21. V1 数据迁移与兼容
 
-新增 Alembic migration：
+V1 **不新增 Alembic migration**。
 
-```text
-0013_media_cues
-```
+内容镜头直接作为可选的 `media_cues` 字段嵌入逐页 `script_json`。因此：
 
-如实际主线 migration 编号已变化，以当前 head 顺延。
+- 已有数据库无需迁移。
+- 历史课程无需回填。
+- 没有 `media_cues` 的页面不进入任何新增 FFmpeg 处理。
+- 提交生成任务时，Render Snapshot 会冻结 Cue 配置及其素材哈希。
+- Remote Worker 通过 `script-media-cues` capability 协商领取相关页面，旧 Worker 不会静默忽略镜头。
 
-不修改已有课程数据。
-
-没有内容镜头的历史课程：
-
-```text
-行为完全不变
-```
-
-这是重要兼容要求。
+后续如果把 Cue 规范化为独立表，再单独增加迁移与数据回填工具。
 
 ---
 
