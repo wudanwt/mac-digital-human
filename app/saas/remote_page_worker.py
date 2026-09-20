@@ -385,6 +385,8 @@ class RemoteApi:
                 "current_task_id": current_task_id,
                 "disk_free_bytes": usage.free,
                 "memory_available_mb": int(memory.available / 1024**2),
+                "cpu_percent": float(psutil.cpu_percent(interval=None)),
+                "memory_percent": float(memory.percent),
                 "last_error": error,
             },
         )

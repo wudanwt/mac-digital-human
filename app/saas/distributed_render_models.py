@@ -22,6 +22,8 @@ class WorkerNode(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(120))
+    group_name: Mapped[str] = mapped_column(String(80), default="default", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
     # A unique constraint is enough to index credentials in PostgreSQL; avoid a
     # second redundant index so create_all and Alembic stay structurally aligned.
     credential_hash: Mapped[str] = mapped_column(String(128), unique=True)
@@ -41,9 +43,29 @@ class WorkerNode(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     disk_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     memory_available_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class WorkerHeartbeatSample(Base):
+    __tablename__ = "worker_heartbeat_samples"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    node_id: Mapped[str] = mapped_column(
+        ForeignKey("worker_nodes.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), default="offline")
+    slots_busy: Mapped[int] = mapped_column(Integer, default=0)
+    current_task_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_available_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
 class WorkerEnrollment(Base):

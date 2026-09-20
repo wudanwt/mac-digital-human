@@ -27,6 +27,7 @@ from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
 from .system_assets_api import router as system_assets_router
 from .worker_status_api import router as worker_status_router
+from .worker_management_api import router as worker_management_router
 
 
 router = APIRouter(prefix=saas_settings.api_prefix)
@@ -113,6 +114,10 @@ def capabilities() -> dict:
         "distributed_direct_downloads": saas_settings.distributed_direct_downloads,
         "distributed_direct_uploads": saas_settings.distributed_direct_uploads,
         "distributed_worker_enrollment": True,
+        "worker_management_center": True,
+        "worker_groups": True,
+        "worker_health_metrics": True,
+        "worker_runtime_configuration": True,
         "distributed_auxiliary_tasks": saas_settings.distributed_render_enabled,
         "render_contract_version": saas_settings.render_contract_version,
         "resident_musetalk_runtime": True,
@@ -158,6 +163,7 @@ for child in (
     backgrounds_router,
     system_assets_router,
     worker_status_router,
+    worker_management_router,
     distributed_worker_internal_router,
     auxiliary_worker_router,
     job_detail_router,

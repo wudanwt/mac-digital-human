@@ -17,12 +17,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.background import BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..config import settings as app_settings
 from .database import get_db
-from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubtask, WorkerEnrollment, WorkerNode
+from .distributed_render_models import RenderArtifact, RenderAttempt, RenderSubtask, WorkerEnrollment, WorkerHeartbeatSample, WorkerNode
 from .distributed_scheduler import (
     LeaseConflict,
     SchedulerError,
@@ -83,6 +83,8 @@ def _serialize_node(node: WorkerNode) -> dict[str, Any]:
     return {
         "id": node.id,
         "name": node.name,
+        "group_name": node.group_name,
+        "notes": node.notes,
         "status": node.status,
         "accepting_tasks": node.accepting_tasks,
         "slots_total": node.slots_total,
@@ -99,6 +101,8 @@ def _serialize_node(node: WorkerNode) -> dict[str, Any]:
         "last_error": node.last_error,
         "disk_free_bytes": node.disk_free_bytes,
         "memory_available_mb": node.memory_available_mb,
+        "cpu_percent": node.cpu_percent,
+        "memory_percent": node.memory_percent,
         "last_seen_at": node.last_seen_at.isoformat() if node.last_seen_at else None,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
@@ -107,11 +111,13 @@ def _serialize_node(node: WorkerNode) -> dict[str, Any]:
 
 class WorkerProvisionRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    group_name: str = Field(default="default", max_length=80)
     slots_total: int = Field(default=1, ge=1, le=4)
 
 
 class WorkerEnrollmentRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    group_name: str = Field(default="default", max_length=80)
     slots_total: int = Field(default=1, ge=1, le=4)
 
 
@@ -144,6 +150,8 @@ class WorkerHeartbeatRequest(BaseModel):
     current_task_id: str | None = Field(default=None, max_length=32)
     disk_free_bytes: int | None = Field(default=None, ge=0)
     memory_available_mb: int | None = Field(default=None, ge=0)
+    cpu_percent: float | None = Field(default=None, ge=0, le=100)
+    memory_percent: float | None = Field(default=None, ge=0, le=100)
     last_error: str | None = Field(default=None, max_length=4000)
     versions: dict[str, str] | None = None
 
@@ -191,6 +199,7 @@ def provision_worker(
     node = WorkerNode(
         id=node_id,
         name=body.name.strip(),
+        group_name=body.group_name.strip() or "default",
         credential_hash=hash_secret(token),
         status="offline",
         accepting_tasks=True,
@@ -224,6 +233,7 @@ def create_worker_enrollment(
     node = WorkerNode(
         id=node_id,
         name=body.name.strip(),
+        group_name=body.group_name.strip() or "default",
         credential_hash=hash_secret(f"pending:{node_id}:{secrets.token_urlsafe(32)}"),
         status="pending",
         accepting_tasks=False,
@@ -280,7 +290,8 @@ def enroll_worker(
     node.accepting_tasks = True
     node.status = "offline"
     if body.name and body.name.strip():
-        node.name = body.name.strip()
+        # name and slots_total are control-plane configuration. Runtime registration
+    # refreshes machine facts without overwriting operator-managed settings.
     node.host = body.host.strip()
     node.platform = body.platform.strip()
     node.machine = body.machine.strip()
@@ -395,11 +406,13 @@ def register_worker_runtime(
 ) -> dict[str, Any]:
     was_incompatible = node.status == "incompatible"
     error = _compatibility_error(body)
-    node.name = body.name.strip()
+    # Operator-managed identity and capacity live in the control plane.
+    # Runtime registration refreshes machine facts only.
     node.host = body.host.strip()
     node.platform = body.platform.strip()
     node.machine = body.machine.strip()
-    node.slots_total = body.slots_total
+    # slots_total is control-plane configuration. The runtime may advertise its
+    # preferred capacity, but a restart must not overwrite an operator override.
     node.capabilities_json = json.dumps(body.capabilities, ensure_ascii=False, sort_keys=True)
     node.versions_json = json.dumps(body.versions, ensure_ascii=False, sort_keys=True)
     node.code_version = body.code_version.strip()
@@ -429,9 +442,12 @@ def worker_heartbeat(
     node: Annotated[WorkerNode, Depends(get_worker_node)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    node.last_seen_at = _now()
+    now = _now()
+    node.last_seen_at = now
     node.disk_free_bytes = body.disk_free_bytes
     node.memory_available_mb = body.memory_available_mb
+    node.cpu_percent = body.cpu_percent
+    node.memory_percent = body.memory_percent
     node.last_error = body.last_error
     if body.versions is not None:
         node.versions_json = json.dumps(body.versions, ensure_ascii=False, sort_keys=True)
@@ -450,8 +466,35 @@ def worker_heartbeat(
         if node.status == "disk_low" and not node.accepting_tasks:
             node.accepting_tasks = True
         node.status = "busy" if node.slots_busy else ("online" if node.accepting_tasks else "draining")
+
+    latest_sample = db.scalar(
+        select(WorkerHeartbeatSample)
+        .where(WorkerHeartbeatSample.node_id == node.id)
+        .order_by(WorkerHeartbeatSample.created_at.desc())
+        .limit(1)
+    )
+    latest_at = as_utc(latest_sample.created_at) if latest_sample is not None else None
+    if latest_at is None or (now - latest_at).total_seconds() >= 30:
+        db.add(
+            WorkerHeartbeatSample(
+                node_id=node.id,
+                status=node.status,
+                slots_busy=node.slots_busy,
+                current_task_id=body.current_task_id,
+                cpu_percent=body.cpu_percent,
+                memory_percent=body.memory_percent,
+                memory_available_mb=body.memory_available_mb,
+                disk_free_bytes=body.disk_free_bytes,
+                created_at=now,
+            )
+        )
+        db.execute(
+            delete(WorkerHeartbeatSample).where(
+                WorkerHeartbeatSample.created_at < now - timedelta(hours=24)
+            )
+        )
     db.commit()
-    return {"worker": _serialize_node(node), "server_time": _now().isoformat()}
+    return {"worker": _serialize_node(node), "server_time": now.isoformat()}
 
 
 def _snapshot_payload(db: Session, parent_job_id: str) -> dict[str, Any]:

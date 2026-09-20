@@ -43,6 +43,7 @@ from .saas.theme_ui import css_response as theme_css_response
 from .saas.voice_clone_guard_ui import javascript_response as voice_clone_guard_javascript_response
 from .saas.web import dashboard_html
 from .saas.worker_ui import javascript_response as worker_javascript_response
+from .saas.worker_center_ui import javascript_response as worker_center_javascript_response
 
 
 @asynccontextmanager
@@ -103,6 +104,7 @@ def _enhanced_dashboard() -> HTMLResponse:
         '<script src="/course-avatar-mode.js?v=20260920-3"></script>'
         '<script src="/course-voice.js"></script>'
         '<script src="/worker-ui.js"></script>'
+        '<script src="/worker-center.js?v=20260921-1"></script>'
         '<script src="/job-detail.js"></script></body>',
     )
     return HTMLResponse(body)
@@ -221,6 +223,11 @@ def course_voice_script():
 @app.get("/worker-ui.js", include_in_schema=False)
 def worker_ui_script():
     return worker_javascript_response()
+
+
+@app.get("/worker-center.js", include_in_schema=False)
+def worker_center_script():
+    return worker_center_javascript_response()
 
 
 @app.get("/job-detail.js", include_in_schema=False)
