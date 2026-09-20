@@ -110,6 +110,8 @@ class ResidentMuseTalkRuntime:
         right_cheek_width: int,
         extra_margin: int,
         cache_items: int,
+        cache_cpu_gb: float,
+        cache_gpu_gb: float,
     ) -> None:
         self.root = musetalk_dir.resolve()
         self.gpu_id = gpu_id
@@ -117,6 +119,8 @@ class ResidentMuseTalkRuntime:
         self.parsing_mode = parsing_mode
         self.extra_margin = extra_margin
         self.cache_items = max(1, cache_items)
+        self.cache_cpu_bytes = max(0, int(cache_cpu_gb * 1024**3))
+        self.cache_gpu_bytes = max(0, int(cache_gpu_gb * 1024**3))
         self.started_at = time.time()
         self.cache_hits = 0
         self.cache_misses = 0
@@ -209,12 +213,25 @@ class ResidentMuseTalkRuntime:
             total += int(getattr(mask, "nbytes", 0))
         return total
 
+    def _cache_usage(self) -> tuple[int, int]:
+        cpu = sum(item.estimated_cpu_bytes for item in self.master_cache.values())
+        gpu = sum(item.estimated_gpu_bytes for item in self.master_cache.values())
+        return cpu, gpu
+
     def _evict_if_needed(self) -> None:
-        while len(self.master_cache) > self.cache_items:
+        evicted = False
+        while len(self.master_cache) > 1:
+            cpu, gpu = self._cache_usage()
+            over_items = len(self.master_cache) > self.cache_items
+            over_cpu = self.cache_cpu_bytes > 0 and cpu > self.cache_cpu_bytes
+            over_gpu = self.cache_gpu_bytes > 0 and gpu > self.cache_gpu_bytes
+            if not (over_items or over_cpu or over_gpu):
+                break
             _key, material = self.master_cache.popitem(last=False)
             self.cache_evictions += 1
+            evicted = True
             del material
-        if self.device.type == "cuda":
+        if evicted and self.device.type == "cuda":
             self.torch.cuda.empty_cache()
 
     def clear_cache(self) -> dict[str, Any]:
@@ -467,8 +484,7 @@ class ResidentMuseTalkRuntime:
         if not output_path.is_file() or output_path.stat().st_size <= 0:
             raise RuntimeError("resident MuseTalk produced no usable output")
 
-        cached_cpu = sum(item.estimated_cpu_bytes for item in self.master_cache.values())
-        cached_gpu = sum(item.estimated_gpu_bytes for item in self.master_cache.values())
+        cached_cpu, cached_gpu = self._cache_usage()
         return {
             "pipeline": "resident-v3",
             "resident": True,
@@ -485,6 +501,8 @@ class ResidentMuseTalkRuntime:
             "master_cache_evictions_total": self.cache_evictions,
             "master_cache_cpu_mb": round(cached_cpu / 1024**2, 2),
             "master_cache_gpu_mb": round(cached_gpu / 1024**2, 2),
+            "master_cache_cpu_limit_gb": round(self.cache_cpu_bytes / 1024**3, 2),
+            "master_cache_gpu_limit_gb": round(self.cache_gpu_bytes / 1024**3, 2),
             "source_decode_seconds": round(float(prepare_metrics["source_decode_seconds"]), 4),
             "landmark_seconds": round(float(prepare_metrics["landmark_seconds"]), 4),
             "latent_prepare_seconds": round(float(prepare_metrics["latent_prepare_seconds"]), 4),
@@ -506,8 +524,7 @@ class ResidentMuseTalkRuntime:
         }
 
     def stats(self) -> dict[str, Any]:
-        cached_cpu = sum(item.estimated_cpu_bytes for item in self.master_cache.values())
-        cached_gpu = sum(item.estimated_gpu_bytes for item in self.master_cache.values())
+        cached_cpu, cached_gpu = self._cache_usage()
         return {
             "pid": os.getpid(),
             "uptime_seconds": round(time.time() - self.started_at, 3),
@@ -517,6 +534,8 @@ class ResidentMuseTalkRuntime:
             "cache_evictions": self.cache_evictions,
             "cache_cpu_mb": round(cached_cpu / 1024**2, 2),
             "cache_gpu_mb": round(cached_gpu / 1024**2, 2),
+            "cache_cpu_limit_gb": round(self.cache_cpu_bytes / 1024**3, 2),
+            "cache_gpu_limit_gb": round(self.cache_gpu_bytes / 1024**3, 2),
             "gpu_allocated_mb": round(self.torch.cuda.memory_allocated(self.device) / 1024**2, 2),
             "gpu_reserved_mb": round(self.torch.cuda.memory_reserved(self.device) / 1024**2, 2),
         }
@@ -540,6 +559,8 @@ def main() -> int:
     parser.add_argument("--left-cheek-width", type=int, default=90)
     parser.add_argument("--right-cheek-width", type=int, default=90)
     parser.add_argument("--cache-items", type=int, default=2)
+    parser.add_argument("--cache-cpu-gb", type=float, default=6.0)
+    parser.add_argument("--cache-gpu-gb", type=float, default=4.0)
     args = parser.parse_args()
 
     # Keep stdout as a clean JSON-lines control channel. MuseTalk, mmpose,
@@ -559,6 +580,8 @@ def main() -> int:
             right_cheek_width=args.right_cheek_width,
             extra_margin=args.extra_margin,
             cache_items=args.cache_items,
+            cache_cpu_gb=args.cache_cpu_gb,
+            cache_gpu_gb=args.cache_gpu_gb,
         )
     except Exception as exc:
         _emit({
@@ -575,6 +598,8 @@ def main() -> int:
         "model_load_seconds": round(runtime.model_load_seconds, 4),
         "gpu": runtime.torch.cuda.get_device_name(runtime.device),
         "cache_items": runtime.cache_items,
+        "cache_cpu_limit_gb": round(runtime.cache_cpu_bytes / 1024**3, 2),
+        "cache_gpu_limit_gb": round(runtime.cache_gpu_bytes / 1024**3, 2),
     })
 
     for raw in sys.stdin:
