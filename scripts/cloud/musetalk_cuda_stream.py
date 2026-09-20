@@ -245,7 +245,7 @@ def main() -> int:
         metrics["video_encoder"] = encoder_name
 
         command = [
-            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin", "-y",
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
             "-f", "rawvideo",
             "-pix_fmt", "bgr24",
             "-s", f"{width}x{height}",
