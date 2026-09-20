@@ -244,11 +244,15 @@ class ResidentMuseTalkRuntime:
     def _prepare_master(self, video_path: Path, cache_key: str) -> tuple[MasterMaterial, bool, dict[str, float]]:
         size, mtime_ns = self._source_signature(video_path)
         cached = self.master_cache.get(cache_key)
+        # Remote Worker master_cache_key is content-addressed (asset id + SHA256).
+        # ContentCache touches file mtime on every access for its own LRU policy,
+        # so mtime must not invalidate a valid resident master entry.
+        content_addressed = not cache_key.startswith("path:")
         if (
             cached is not None
             and cached.source == str(video_path)
             and cached.source_size == size
-            and cached.source_mtime_ns == mtime_ns
+            and (content_addressed or cached.source_mtime_ns == mtime_ns)
         ):
             self.cache_hits += 1
             self.master_cache.move_to_end(cache_key)
