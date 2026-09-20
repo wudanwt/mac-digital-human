@@ -11,6 +11,17 @@ nvidia-smi --query-gpu=name,memory.total,utilization.gpu,driver_version --format
 
 printf '\n=== FFmpeg ===\n'
 ffmpeg -version | head -n 1
+if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'h264_nvenc'; then
+  echo 'h264_nvenc=available'
+  if ffmpeg -hide_banner -loglevel error -f lavfi -i 'color=c=black:s=64x64:r=25:d=0.04' \
+      -frames:v 1 -c:v h264_nvenc -f null - >/dev/null 2>&1; then
+    echo 'h264_nvenc_usable=true'
+  else
+    echo 'h264_nvenc_usable=false (V2 will fall back to libx264)'
+  fi
+else
+  echo 'h264_nvenc=missing (V2 will fall back to libx264)'
+fi
 
 if [ ! -x "$PYTHON" ]; then
   echo "MuseTalk CUDA Python not found: $PYTHON" >&2
@@ -29,6 +40,15 @@ if torch.cuda.is_available():
     print('gpu=', torch.cuda.get_device_name(0))
     print('vram_gb=', round(torch.cuda.get_device_properties(0).total_memory / 1024**3, 2))
 PY
+
+printf '\n=== CUDA Performance V2 runner ===\n'
+if [ -f "$ROOT/scripts/cloud/musetalk_cuda_stream.py" ]; then
+  "$PYTHON" -m py_compile "$ROOT/scripts/cloud/musetalk_cuda_stream.py"
+  echo "OK   $ROOT/scripts/cloud/musetalk_cuda_stream.py"
+else
+  echo "MISS $ROOT/scripts/cloud/musetalk_cuda_stream.py" >&2
+  exit 1
+fi
 
 printf '\n=== MuseTalk files ===\n'
 TORCH_HUB_DIR="$("$PYTHON" -c 'import torch; print(torch.hub.get_dir())')"
