@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from ..composer import ComposeConfig, ComposeError
 
@@ -458,7 +457,7 @@ def apply_media_cues(
             if cue.media_type != "video" or not cue_has_audio.get(cue.id):
                 raise ValueError(f"内容镜头 {cue.id} 选择了素材原声，但素材没有可用音轨")
             base_audio_filters.append(
-                f"volume=enable='between(t,{cue.start_seconds:.6f},{cue.end_seconds:.6f})':volume=0"
+                f"volume=0:enable='between(t,{cue.start_seconds:.6f},{cue.end_seconds:.6f})'"
             )
 
         if cue.media_type == "video" and cue.audio_mode in {"duck", "original"} and cue_has_audio.get(cue.id):
