@@ -64,6 +64,7 @@ print("ORT EPs     :", ", ".join(providers))
 print("Video encoder requested:", encoder["requested"])
 print("Video encoder selected :", encoder["selected"])
 print("FFmpeg NVENC available :", encoder["ffmpeg_h264_nvenc"])
+print("FFmpeg NVENC usable    :", encoder["ffmpeg_h264_nvenc_usable"])
 PY
 
 exec "$PYTHON" -m app.saas.remote_page_worker
