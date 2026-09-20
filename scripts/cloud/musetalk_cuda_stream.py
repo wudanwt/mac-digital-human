@@ -70,6 +70,47 @@ def _encoder_args(requested: str, quality: int) -> tuple[str, list[str]]:
     raise RuntimeError(f"unsupported MuseTalk video encoder: {requested}")
 
 
+def _prepare_alpha_patch(np, cv2, mask_array, crop_box, bbox):
+    x, y, x1, y1 = [int(v) for v in bbox]
+    x_s, y_s, _x_e, _y_e = [int(v) for v in crop_box]
+    patch = mask_array[y - y_s:y1 - y_s, x - x_s:x1 - x_s]
+    expected_h = max(0, y1 - y)
+    expected_w = max(0, x1 - x)
+    if patch.shape[:2] != (expected_h, expected_w):
+        patch = cv2.resize(
+            patch,
+            (expected_w, expected_h),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    return patch.astype(np.float32, copy=False) / 255.0
+
+
+def _fast_blend_frame(np, cv2, image, face, bbox, alpha_patch):
+    x, y, x1, y1 = [int(v) for v in bbox]
+    out = image.copy()
+    height, width = out.shape[:2]
+    cx0, cy0 = max(0, x), max(0, y)
+    cx1, cy1 = min(width, x1), min(height, y1)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return out
+
+    fx0, fy0 = cx0 - x, cy0 - y
+    fx1, fy1 = fx0 + (cx1 - cx0), fy0 + (cy1 - cy0)
+    src = face[fy0:fy1, fx0:fx1].astype(np.float32, copy=False)
+    dst = out[cy0:cy1, cx0:cx1].astype(np.float32, copy=False)
+    alpha = alpha_patch[fy0:fy1, fx0:fx1]
+    if alpha.shape[:2] != dst.shape[:2]:
+        alpha = cv2.resize(
+            alpha,
+            (dst.shape[1], dst.shape[0]),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    alpha = alpha[..., None]
+    blended = src * alpha + dst * (1.0 - alpha)
+    out[cy0:cy1, cx0:cx1] = np.clip(blended + 0.5, 0, 255).astype(np.uint8)
+    return out
+
+
 def _write_metrics(path: Path, metrics: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -95,6 +136,9 @@ def main() -> int:
     parser.add_argument("--video-encoder", default="auto")
     parser.add_argument("--quality", type=int, default=18)
     args = parser.parse_args()
+    fast_blend = os.getenv("MUSETALK_CUDA_FAST_BLEND", "1").strip().lower() not in {
+        "0", "false", "no", "off"
+    }
 
     root = Path(args.musetalk_dir).resolve()
     video_path = Path(args.video).resolve()
@@ -228,7 +272,8 @@ def main() -> int:
                 fp=fp,
                 mode=args.parsing_mode,
             )
-            blend_materials.append((mask_array, crop_box))
+            alpha_patch = _prepare_alpha_patch(np, cv2, mask_array, crop_box, bbox)
+            blend_materials.append((mask_array, crop_box, alpha_patch))
         metrics["blend_material_prepare_seconds"] = round(_timer() - stage, 4)
 
         frame_cycle = frame_list + frame_list[::-1]
@@ -312,14 +357,24 @@ def main() -> int:
                     (x2 - x1, y2 - y1),
                     interpolation=cv2.INTER_LINEAR,
                 )
-                mask_array, crop_box = material
-                combined = get_image_blending(
-                    ori_frame,
-                    resized,
-                    [x1, y1, x2, y2],
-                    mask_array,
-                    crop_box,
-                )
+                mask_array, crop_box, alpha_patch = material
+                if fast_blend:
+                    combined = _fast_blend_frame(
+                        np,
+                        cv2,
+                        ori_frame,
+                        resized,
+                        [x1, y1, x2, y2],
+                        alpha_patch,
+                    )
+                else:
+                    combined = get_image_blending(
+                        ori_frame,
+                        resized,
+                        [x1, y1, x2, y2],
+                        mask_array,
+                        crop_box,
+                    )
                 proc.stdin.write(np.ascontiguousarray(combined).tobytes())
                 written += 1
         finally:
@@ -338,6 +393,7 @@ def main() -> int:
             raise RuntimeError("MuseTalk streaming encoder produced no usable output")
 
     metrics["total_seconds"] = round(_timer() - total_started, 4)
+    metrics["blend_backend"] = "numpy-alpha" if fast_blend else "upstream-pil"
     metrics["batch_size"] = args.batch_size
     metrics["fps"] = round(fps, 6)
     metrics["output_bytes"] = output_path.stat().st_size
