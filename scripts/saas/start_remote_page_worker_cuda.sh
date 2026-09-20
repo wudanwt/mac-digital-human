@@ -31,6 +31,12 @@ export MUSETALK_CUDA_MASTER_CACHE_ITEMS="${MUSETALK_CUDA_MASTER_CACHE_ITEMS:-2}"
 export MUSETALK_CUDA_MASTER_CACHE_CPU_GB="${MUSETALK_CUDA_MASTER_CACHE_CPU_GB:-6}"
 export MUSETALK_CUDA_MASTER_CACHE_GPU_GB="${MUSETALK_CUDA_MASTER_CACHE_GPU_GB:-4}"
 
+# Prefer an already-installed FFmpeg binary that can really use NVENC. This is
+# especially important on rented images where an active Conda environment may
+# shadow /usr/bin/ffmpeg with a build that has no NVIDIA encoder support.
+# shellcheck disable=SC1091
+source "$ROOT/scripts/cloud/select_cuda_ffmpeg.sh"
+
 bash "$ROOT/scripts/cloud/check_musetalk_cuda.sh"
 
 echo
@@ -41,6 +47,8 @@ echo "Resident fallback to V2  : $MUSETALK_CUDA_RESIDENT_FALLBACK"
 echo "Master cache items       : $MUSETALK_CUDA_MASTER_CACHE_ITEMS"
 echo "Master cache CPU GB      : $MUSETALK_CUDA_MASTER_CACHE_CPU_GB"
 echo "Master cache GPU GB      : $MUSETALK_CUDA_MASTER_CACHE_GPU_GB"
+echo "FFmpeg binary            : $(command -v ffmpeg)"
+echo "CUDA FFmpeg NVENC        : ${CUDA_SELECTED_FFMPEG_NVENC:-0}"
 
 PYTHON="${CUDA_WORKER_PYTHON:-$ROOT/.venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
