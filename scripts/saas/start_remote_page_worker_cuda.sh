@@ -34,6 +34,7 @@ fi
 
 "$PYTHON" - <<'PY'
 import platform
+import onnxruntime as ort
 import torch
 
 if platform.system() != "Linux":
@@ -43,9 +44,17 @@ if not torch.cuda.is_available():
         "Main Worker Python cannot see CUDA. Install a CUDA-enabled PyTorch build "
         "so CosyVoice TTS also runs on NVIDIA GPU."
     )
+providers = ort.get_available_providers()
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit(
+        "ONNX Runtime CUDAExecutionProvider is unavailable. "
+        f"Available providers: {providers}. Re-run scripts/cloud/setup_cuda_worker_runtime.sh."
+    )
 print("Worker torch:", torch.__version__)
 print("Worker CUDA :", torch.version.cuda)
 print("Worker GPU  :", torch.cuda.get_device_name(0))
+print("Worker ORT  :", ort.__version__)
+print("ORT EPs     :", ", ".join(providers))
 PY
 
 exec "$PYTHON" -m app.saas.remote_page_worker
