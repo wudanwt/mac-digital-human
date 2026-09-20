@@ -34,6 +34,7 @@ def test_auxiliary_priority_routing() -> None:
             now = datetime.now(timezone.utc)
 
             with SessionLocal() as db:
+                db.query(AuxiliaryTaskLease).delete()
                 db.query(SpeechPreviewJob).filter(SpeechPreviewJob.status == "queued").update(
                     {"status": "failed", "error": "test setup cleanup"}
                 )
