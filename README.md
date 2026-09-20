@@ -114,7 +114,10 @@ bash scripts/saas/start_mlx_worker_mac.sh
 
 启动脚本会先检查 Apple Silicon、FFmpeg、PostgreSQL、Redis、共享素材目录、MuseTalk MLX、CosyVoice 与 Portrait Matting，全部通过后才进入 Worker 循环。
 
-详细说明见：[`docs/MAC_MLX_SAAS.md`](docs/MAC_MLX_SAAS.md)。\n\nLinux NVIDIA CUDA Worker 的安装、配置与启动见：[`docs/CUDA_REMOTE_WORKER.md`](docs/CUDA_REMOTE_WORKER.md)。\n
+详细说明见：[`docs/MAC_MLX_SAAS.md`](docs/MAC_MLX_SAAS.md)。
+
+Linux NVIDIA CUDA Worker 的安装、配置与启动见：[`docs/CUDA_REMOTE_WORKER.md`](docs/CUDA_REMOTE_WORKER.md)。
+
 ### 公网 Remote Worker
 
 Page-level distributed Worker 支持 API-only 模式：异地 Mac 只需要主动访问 Center HTTPS，不需要 PostgreSQL、Redis 或对象存储凭据。生产对象存储为 S3 / OSS / COS 时，可开启短时 Signed URL 直下/直传，大文件不再经过 FastAPI；直连失败会自动回退 Center proxy。
