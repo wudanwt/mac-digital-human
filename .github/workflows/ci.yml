@@ -59,6 +59,9 @@ jobs:
           bash -n scripts/saas/start_mlx_worker_mac.sh
           bash -n scripts/saas/start_distributed_center.sh
           bash -n scripts/saas/start_remote_page_worker_mac.sh
+          bash -n scripts/saas/start_remote_page_worker_cuda.sh
+          bash -n scripts/cloud/setup_musetalk_cuda.sh
+          bash -n scripts/cloud/check_musetalk_cuda.sh
       - name: Browser JavaScript syntax
         run: |
           python - <<'PY'
