@@ -27,6 +27,7 @@ from .storage import object_store
 from .studio_api import avatar_router, course_router, dashboard_router, job_router, voice_router
 from .system_assets_api import router as system_assets_router
 from .worker_status_api import router as worker_status_router
+from .worker_management_api import router as worker_management_router
 
 
 router = APIRouter(prefix=saas_settings.api_prefix)
@@ -155,6 +156,7 @@ for child in (
     backgrounds_router,
     system_assets_router,
     worker_status_router,
+    worker_management_router,
     distributed_worker_internal_router,
     auxiliary_worker_router,
     job_detail_router,
