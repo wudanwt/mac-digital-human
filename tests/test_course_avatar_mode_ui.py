@@ -25,7 +25,9 @@ def test_course_avatar_mode_ui_persists_and_previews_modes(tmp_path: Path) -> No
     assert "slide.avatar_mode=mode" in JS
     assert "avatar_mode:s.avatar_mode||'original'" in STUDIO_JS
     assert "s.layout=src.layout" in STUDIO_JS
-    assert "s.avatar_mode=src.avatar_mode" not in STUDIO_JS
+    assert "s.avatar_mode=src.avatar_mode||'original'" in STUDIO_JS
+    assert "applyAll.dataset.avatarModeAll='1'" in JS
+    assert "for(let i=1;i<=totalSlides();i++)setMode(i,mode)" in JS
 
     node = shutil.which("node")
     if node:

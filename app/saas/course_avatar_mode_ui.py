@@ -104,6 +104,15 @@ JS = r'''
     </div><div class="avatar-mode-readiness ${ready?'ok':s?.status==='failed'?'bad':''}">${html(status)}${s?.error?` · ${html(s.error)}`:''}</div>
     ${!ready&&!['queued','running'].includes(s?.status)?'<button type="button" class="secondary avatar-mode-make">生成透明讲师资产</button>':''}
     <button type="button" class="secondary avatar-mode-apply">将当前模式应用到全部页面</button>`;
+    const applyAll=document.getElementById('applyAllLayout');
+    if(applyAll&&!applyAll.dataset.avatarModeAll){
+      applyAll.dataset.avatarModeAll='1';
+      applyAll.addEventListener('click',()=>{
+        const mode=currentMode();
+        for(let i=1;i<=totalSlides();i++)setMode(i,mode);
+        dirty();
+      });
+    }
     await applyPreview();
   }
 
