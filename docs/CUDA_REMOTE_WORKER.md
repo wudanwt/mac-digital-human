@@ -34,23 +34,15 @@ cd mac-digital-human-saas
 git checkout feat/cuda-worker
 
 bash scripts/cloud/setup_musetalk_cuda.sh
-
-python3.11 -m venv .venv
-.venv/bin/pip install -U pip
-.venv/bin/pip install -e '.[saas,matting,cosyvoice]'
+bash scripts/cloud/setup_cuda_worker_runtime.sh
 ```
 
-The main `.venv` must use a CUDA-enabled PyTorch build. Verify:
+The CUDA deployment intentionally uses two isolated environments:
 
-```bash
-.venv/bin/python - <<'PY'
-import torch
-print(torch.__version__)
-print(torch.version.cuda)
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA")
-PY
-```
+- `musetalk-cuda`: Python 3.10 + official MuseTalk 1.5 / PyTorch 2.0.1 CUDA 11.8.
+- `digital-human-worker`: Python 3.11 + SaaS Worker / CosyVoice / matting / CUDA-enabled PyTorch 2.3.1.
+
+The bootstrap prints the exact `CUDA_WORKER_PYTHON=...` path to copy into `.env.cuda-worker`.
 
 `MuseTalkCUDAEngine` intentionally invokes the official MuseTalk runtime in the isolated `musetalk-cuda` Conda environment. CosyVoice runs in the main Worker process and automatically selects CUDA when that process sees `torch.cuda.is_available() == True`.
 
