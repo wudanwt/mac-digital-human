@@ -110,11 +110,13 @@ def _serialize_node(node: WorkerNode) -> dict[str, Any]:
 
 class WorkerProvisionRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    group_name: str = Field(default="default", max_length=80)
     slots_total: int = Field(default=1, ge=1, le=4)
 
 
 class WorkerEnrollmentRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    group_name: str = Field(default="default", max_length=80)
     slots_total: int = Field(default=1, ge=1, le=4)
 
 
@@ -196,6 +198,7 @@ def provision_worker(
     node = WorkerNode(
         id=node_id,
         name=body.name.strip(),
+        group_name=body.group_name.strip() or "default",
         credential_hash=hash_secret(token),
         status="offline",
         accepting_tasks=True,
@@ -229,6 +232,7 @@ def create_worker_enrollment(
     node = WorkerNode(
         id=node_id,
         name=body.name.strip(),
+        group_name=body.group_name.strip() or "default",
         credential_hash=hash_secret(f"pending:{node_id}:{secrets.token_urlsafe(32)}"),
         status="pending",
         accepting_tasks=False,
