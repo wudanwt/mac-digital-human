@@ -99,6 +99,7 @@ say "Downloading MuseTalk weights"
   # required by MuseTalk's transformers pin and uses deprecated CLI flags.
   run pip install "huggingface_hub==0.30.2"
   export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+  export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download TMElyralab/MuseTalk \
     --local-dir models --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
   PATH="$MUSETALK_VENV/bin:$PATH" huggingface-cli download stabilityai/sd-vae-ft-mse \
