@@ -37,7 +37,7 @@ cosyvoice = [
   "pyworld>=0.3.4",
   "setuptools<72",
   "soundfile>=0.12.0",
-  "transformers>=4.48",
+  "transformers>=4.48,<5",
   "wetext>=0.0.4",
   "wget>=3.2",
   "x-transformers>=2.11.24",
@@ -59,7 +59,7 @@ matting = [
   "opencv-python-headless>=4.10",
   "torch>=2.3.0",
   "torchvision>=0.18.0",
-  "transformers>=4.48",
+  "transformers>=4.48,<5",
   "kornia>=0.7,<1",
   "timm>=1,<2",
 ]
